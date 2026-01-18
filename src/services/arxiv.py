@@ -12,7 +12,7 @@ class ArxivFetcher:
     def __init__(self, categories: List[str] = ["cs.CV", "cs.CL", "cs.AI"]):
         self.categories = categories
 
-    def fetch_papers(self, max_results: int = 100) -> List[Paper]:
+    def fetch_papers(self, max_results: int = 2000) -> List[Paper]:
         """
         Fetch papers from arXiv API for the configured categories.
         Sort by submittedDate descending (newest first).
@@ -55,7 +55,7 @@ class ArxivFetcher:
             primary_cat = entry.arxiv_primary_category["term"]
             
             # All categories
-            # categories = [tag["term"] for tag in entry.tags]
+            categories = [tag["term"] for tag in entry.tags]
             
             # PDF Link
             pdf_url = ""
@@ -67,9 +67,10 @@ class ArxivFetcher:
                 id=arxiv_id,
                 title=title,
                 authors=str(authors).replace("'", '"'), # Simple JSON dump
-                summary_generic=abstract,
+                summary_generic=abstract,   
                 published_at=published,
                 category_primary=primary_cat,
+                all_categories=str(categories).replace("'", '"'), # Simple JSON dump
                 pdf_url=pdf_url,
                 updated_at=updated
             )
@@ -116,7 +117,7 @@ class ArxivFetcher:
 def run_fetch_cycle():
     from src.config import settings
     fetcher = ArxivFetcher(categories=settings.ARXIV_CATEGORIES)
-    fetched = fetcher.fetch_papers(max_results=100)
+    fetched = fetcher.fetch_papers(max_results=2000)
     new_ones = fetcher.filter_new_papers(fetched)
     print(f"New papers after deduplication: {len(new_ones)}")
     fetcher.save_papers(new_ones)

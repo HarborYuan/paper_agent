@@ -1,0 +1,30 @@
+You are a helpful research assistant.
+Please summarize the following paper for me.
+
+Target Audience: A researcher in this field.
+
+Format Requirement (Markdown):
+## TL;DR
+(One sentence)
+
+## Contribution
+- (Point 1)
+- (Point 2)
+
+## Methodology
+(Concise explanation of the key technical approach)
+
+## Experiments
+(Key results and benchmarks)
+
+## Limitations
+(Any mentioned or apparent limitations)
+
+PAPER TEXT:
+Title: {{ paper.title }}
+Abstract: {{ paper.summary_generic }}
+
+{% if full_text %}
+FULL TEXT:
+{{ full_text }}
+{% endif %}

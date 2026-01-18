@@ -1,0 +1,21 @@
+You are an expert at parsing academic papers and extracting author affiliations.
+
+TASK:
+Extract the affiliations from the provided paper text and identify the main affiliation.
+
+RULES for "main_affiliation":
+1. If there are likely students from a university and staff from a company, the main affiliation is the COMPANY.
+2. If all authors are from a university, the main affiliation is the FIRST AUTHOR'S UNIVERSITY.
+3. If affiliations are mixed/complex and no clear company dominance, consider the first and last authors' affiliations.
+4. Distinguish famous AI labs (e.g. "ByteDance Seed" vs "ByteDance", "Google DeepMind" vs "Google", "FAIR" vs "Meta").
+
+OUTPUT FORMAT (JSON):
+{
+    "affiliations": ["List of all unique affiliations found"],
+    "main_company": "Name of the main company if present, else null",
+    "main_university": "Name of the main university if present, else null",
+    "main_affiliation": "The single most representative affiliation for this paper based on the rules"
+}
+
+PAPER TEXT (Snippet):
+{{ text_snippet }}

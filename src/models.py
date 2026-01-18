@@ -10,7 +10,15 @@ class Paper(SQLModel, table=True):
     summary_generic: str
     published_at: datetime
     category_primary: str
+    all_categories: str  # JSON list
     pdf_url: str
+    
+    full_text: Optional[str] = Field(default=None)
+    
+    affiliations: Optional[str] = None # JSON list
+    main_company: Optional[str] = None
+    main_university: Optional[str] = None
+    main_affiliation: Optional[str] = None
     
     score: Optional[int] = None
     score_reason: Optional[str] = None # JSON with details

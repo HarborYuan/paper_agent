@@ -1,25 +1,22 @@
 import asyncio
+import json
 from typing import List
 from sqlmodel import Session, select
 from src.database import engine
+from src.config import settings
 from src.models import Paper
 from src.services.arxiv import ArxivFetcher
 from src.services.llm import LLMService
 from src.services.notifier import get_notifier
+from src.services.pdf_service import pdf_service
 
-# Configuration (could be moved to settings)
-USER_PROFILE = """
-I am interested in Computer Vision and Multi-modal Learning.
-Keywords: Video Understanding, VLM, Segmentation, Reasoning, 3D.
-Avoid: Network Security, Pure Math, HCI.
-"""
 SCORE_THRESHOLD = 60
 CONCURRENCY_LIMIT = 5
 
 async def process_paper_score(sem: asyncio.Semaphore, llm: LLMService, paper: Paper):
     async with sem:
         print(f"Scoring paper: {paper.id}")
-        score_data = await llm.score_paper(paper, USER_PROFILE)
+        score_data = await llm.score_paper(paper, settings.USER_PROFILE)
         
         with Session(engine) as session:
             db_paper = session.get(Paper, paper.id)
@@ -36,13 +33,42 @@ async def process_paper_score(sem: asyncio.Semaphore, llm: LLMService, paper: Pa
 async def process_paper_summary(sem: asyncio.Semaphore, llm: LLMService, paper: Paper):
     async with sem:
         print(f"Summarizing paper: {paper.id}")
-        summary = await llm.summarize_paper(paper)
+        
+        # Need to re-fetch paper from DB or just use passed object? Passed object is detached or from session?
+        # Better to fetch full text here.
+        full_text = None
+        if paper.pdf_url:
+            full_text = await pdf_service.extract_text_from_url(paper.pdf_url)
+        
+        affiliations = None
+        if full_text:
+            print(f"  - Extracted full text for {paper.id}")
+            # Extract affiliations
+            aff_data = await llm.extract_affiliations(paper, full_text)
+            if aff_data:
+                print(f"  - Affiliations: {aff_data.main_affiliation}")
+            # Summarize with full text
+            summary = await llm.summarize_paper(paper, full_text=full_text)
+        else:
+            print(f"  - Full text not available for {paper.id}")
+            summary = await llm.summarize_paper(paper)
         
         with Session(engine) as session:
             db_paper = session.get(Paper, paper.id)
-            if db_paper and summary:
-                db_paper.summary_personalized = summary
-                db_paper.status = "SUMMARIZED"
+            if db_paper:
+                if full_text:
+                    db_paper.full_text = full_text
+                
+                if aff_data:
+                    db_paper.affiliations = json.dumps(aff_data.affiliations)
+                    db_paper.main_company = aff_data.main_company
+                    db_paper.main_university = aff_data.main_university
+                    db_paper.main_affiliation = aff_data.main_affiliation
+                
+                if summary:
+                    db_paper.summary_personalized = summary
+                    db_paper.status = "SUMMARIZED"
+                
                 session.add(db_paper)
                 session.commit()
 
@@ -51,7 +77,7 @@ async def run_worker():
     
     # 1. Fetch
     fetcher = ArxivFetcher(categories=settings.ARXIV_CATEGORIES)
-    fetched_papers = fetcher.fetch_papers(max_results=50) # Limit for MVP
+    fetched_papers = fetcher.fetch_papers(max_results=2000) # 2000 for MVP; usually 
     new_papers = fetcher.filter_new_papers(fetched_papers)
     fetcher.save_papers(new_papers)
     

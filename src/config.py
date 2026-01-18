@@ -12,6 +12,12 @@ class Settings(BaseSettings):
     PUSHOVER_USER_KEY: str | None = None
     PUSHOVER_API_TOKEN: str | None = None
     ARXIV_CATEGORIES: List[str] = ["cs.CV", "cs.CL", "cs.AI"]
+    
+    USER_PROFILE: str = """
+    I am interested in Computer Vision and Multi-modal Learning.
+    Keywords: Video Understanding, VLM, Segmentation, Reasoning, 3D.
+    Avoid: Network Security, Pure Math, HCI.
+    """
 
     model_config = SettingsConfigDict(env_file=".env")
 
