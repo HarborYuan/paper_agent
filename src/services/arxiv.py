@@ -43,6 +43,9 @@ class ArxivFetcher:
             # User typically wants versioned or unversioned. The atom ID is usually a URL.
             # We will use the ID string from the ID field.
             arxiv_id = entry.id.split("/abs/")[-1]
+            import re
+            # Strip version suffix (e.g., v1, v2)
+            arxiv_id = re.sub(r'v\d+$', '', arxiv_id)
             
             # Helper to safely get attributes
             title = entry.title.replace("\n", " ")

@@ -10,7 +10,7 @@ from src.services.llm import LLMService
 from src.services.notifier import get_notifier
 from src.services.pdf_service import pdf_service
 
-SCORE_THRESHOLD = 60
+SCORE_THRESHOLD = 85
 CONCURRENCY_LIMIT = 5
 
 async def process_paper_score(sem: asyncio.Semaphore, llm: LLMService, paper: Paper):
@@ -77,7 +77,8 @@ async def run_worker():
     
     # 1. Fetch
     fetcher = ArxivFetcher(categories=settings.ARXIV_CATEGORIES)
-    fetched_papers = fetcher.fetch_papers(max_results=2000) # 2000 for MVP; usually 
+    # 2000 for MVP; usually good enough
+    fetched_papers = fetcher.fetch_papers(max_results=10)
     new_papers = fetcher.filter_new_papers(fetched_papers)
     fetcher.save_papers(new_papers)
     
@@ -132,4 +133,9 @@ async def run_worker():
             print("No notifier configured.")
 
 if __name__ == "__main__":
+    from src.database import init_db
+    try:
+        init_db()
+    except Exception as e:
+        print(f"DB Init Error: {e}")
     asyncio.run(run_worker())
