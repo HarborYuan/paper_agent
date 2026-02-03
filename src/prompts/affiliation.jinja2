@@ -9,6 +9,25 @@ RULES for "main_affiliation":
 3. If affiliations are mixed/complex and no clear company dominance, consider the first and last authors' affiliations.
 4. Distinguish famous AI labs (e.g. "ByteDance Seed" vs "ByteDance", "Google DeepMind" vs "Google", "FAIR" vs "Meta").
 
+RULES for Formatting (CRITICAL):
+1. **Universities (US):** Use standard abbreviations for well-known US universities. Examples:
+   - "University of Virginia" -> "UVA"
+   - "University of California, Berkeley" -> "UC Berkeley"
+   - "Massachusetts Institute of Technology" -> "MIT"
+   - "Stanford University" -> "Stanford"
+   - "University of California, San Diego" -> "UCSD"
+2. **Universities (Non-US/Other):** Use full names (e.g. "Peking University", "Tsinghua University").
+3. **Companies:** Use unified names, NO "Inc.", "Corp.", "Ltd.", etc. Examples:
+   - "ByteDance Inc." -> "ByteDance"
+   - "Google LLC" -> "Google"
+   - "Meta Platforms" -> "Meta"
+4. **Famous Labs:** Be specific. Examples:
+   - "Google DeepMind" (not just Google or DeepMind)
+   - "Meta Superintelligence Labs"
+   - "Meta Reality Labs"
+   - "ByteDance Seed"
+   - "Microsoft Research"
+
 OUTPUT FORMAT (JSON):
 {
     "affiliations": ["List of all unique affiliations found"],

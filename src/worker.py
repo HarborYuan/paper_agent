@@ -9,9 +9,11 @@ from src.services.arxiv import ArxivFetcher
 from src.services.llm import LLMService
 from src.services.notifier import get_notifier
 from src.services.pdf_service import pdf_service
+from src.utils import sanitize_text
 
 SCORE_THRESHOLD = 85
 CONCURRENCY_LIMIT = 5
+PAPER_SYNC_LIMIT = 500
 
 async def process_paper_score(sem: asyncio.Semaphore, llm: LLMService, paper: Paper):
     async with sem:
@@ -22,7 +24,7 @@ async def process_paper_score(sem: asyncio.Semaphore, llm: LLMService, paper: Pa
             db_paper = session.get(Paper, paper.id)
             if db_paper and score_data:
                 db_paper.score = score_data.score
-                db_paper.score_reason = score_data.model_dump_json()
+                db_paper.score_reason = sanitize_text(score_data.model_dump_json())
                 if score_data.score < SCORE_THRESHOLD:
                     db_paper.status = "FILTERED"
                 else:
@@ -57,16 +59,16 @@ async def process_paper_summary(sem: asyncio.Semaphore, llm: LLMService, paper: 
             db_paper = session.get(Paper, paper.id)
             if db_paper:
                 if full_text:
-                    db_paper.full_text = full_text
+                    db_paper.full_text = sanitize_text(full_text)
                 
                 if aff_data:
-                    db_paper.affiliations = json.dumps(aff_data.affiliations)
-                    db_paper.main_company = aff_data.main_company
-                    db_paper.main_university = aff_data.main_university
-                    db_paper.main_affiliation = aff_data.main_affiliation
+                    db_paper.affiliations = sanitize_text(json.dumps(aff_data.affiliations))
+                    db_paper.main_company = sanitize_text(aff_data.main_company)
+                    db_paper.main_university = sanitize_text(aff_data.main_university)
+                    db_paper.main_affiliation = sanitize_text(aff_data.main_affiliation)
                 
                 if summary:
-                    db_paper.summary_personalized = summary
+                    db_paper.summary_personalized = sanitize_text(summary)
                     db_paper.status = "SUMMARIZED"
                 
                 session.add(db_paper)
@@ -78,7 +80,7 @@ async def run_worker():
     # 1. Fetch
     fetcher = ArxivFetcher(categories=settings.ARXIV_CATEGORIES)
     # 2000 for MVP; usually good enough
-    fetched_papers = fetcher.fetch_papers(max_results=10)
+    fetched_papers = fetcher.fetch_papers(max_results=PAPER_SYNC_LIMIT)
     new_papers = fetcher.filter_new_papers(fetched_papers)
     fetcher.save_papers(new_papers)
     
