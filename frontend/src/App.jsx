@@ -17,6 +17,8 @@ function App() {
   const [running, setRunning] = useState(false);
   const [showLowScore, setShowLowScore] = useState(false);
 
+  const [startDate, setStartDate] = useState(null); // Earliest paper date
+
   // Intersection observer for infinite scroll
   const { ref: observerRef, inView } = useInView({
     threshold: 0,
@@ -32,15 +34,36 @@ function App() {
 
   // Initial load
   useEffect(() => {
+    // Fetch earliest date first
+    const fetchMeta = async () => {
+      try {
+        const res = await axios.get(`${API_URL}/papers/start-date`);
+        if (res.data.date) {
+          setStartDate(new Date(res.data.date));
+        }
+      } catch (e) {
+        console.error("Failed to fetch start date", e);
+      }
+    };
+    fetchMeta();
+
     loadNextDay(new Date());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const loadNextDay = async (startDate = null) => {
-    if (isLoading) return;
+  const loadNextDay = async (startTime = null) => {
+    if (isLoading || !hasMore) return;
     setIsLoading(true);
 
-    let targetDate = startDate || cursorDate;
+    let targetDate = startTime || cursorDate;
+
+    // Stop if we went past start date
+    if (startDate && targetDate < startDate) {
+      setHasMore(false);
+      setIsLoading(false);
+      return;
+    }
+
     let daysTried = 0;
     let foundPapers = false;
     let newGroups = [];
@@ -55,6 +78,13 @@ function App() {
 
     try {
       while (daysTried < 5 && !foundPapers) {
+
+        // Double check against start date inside loop
+        if (startDate && targetDate < startDate) {
+          setHasMore(false);
+          break;
+        }
+
         const dateStr = format(targetDate, 'yyyy-MM-dd');
         console.log(`Fetching for ${dateStr}`);
 

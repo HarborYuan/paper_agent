@@ -71,6 +71,20 @@ def list_papers(
     results = session.exec(query).all()
     return results
 
+@app.get("/papers/start-date")
+def get_start_date(session: Session = Depends(get_session)):
+    """
+    Get the date of the earliest paper in the database.
+    Used for infinite scroll termination.
+    """
+    statement = select(Paper.published_at).order_by(Paper.published_at.asc()).limit(1)
+    result = session.exec(statement).first()
+    
+    if not result:
+        return {"date": None}
+        
+    return {"date": result.date().isoformat()}
+
 @app.get("/")
 def read_root():
     return {"message": "Welcome to Paper Agent. POST /run to start processing."}
