@@ -151,6 +151,32 @@ def get_start_date(session: Session = Depends(get_session)):
         
     return {"date": result.date().isoformat()}
 
+@app.get("/papers/next-date")
+def get_next_date(date: str, session: Session = Depends(get_session)):
+    """
+    Get the next available date with papers before the given date.
+    Used for skipping empty days in infinite scroll.
+    """
+    try:
+        current_date = datetime.strptime(date, "%Y-%m-%d").date()
+        # Find the max published_at that is strictly less than the start of current_date
+        # We look for the latest paper BEFORE this day.
+        
+        # We want the date of the paper.
+        query = select(Paper.published_at)\
+            .where(Paper.published_at <= datetime.combine(current_date, datetime.max.time()))\
+            .order_by(Paper.published_at.desc())\
+            .limit(1)
+            
+        result = session.exec(query).first()
+        
+        if not result:
+            return {"date": None}
+            
+        return {"date": result.date().isoformat()}
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+
 @app.get("/")
 def read_root():
     return {"message": "Welcome to Paper Agent. POST /run to start processing."}

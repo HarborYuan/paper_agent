@@ -75,83 +75,55 @@ function App() {
       return;
     }
 
-    let daysTried = 0;
-    let foundPapers = false;
-    let newGroups = [];
-
-    // Recursive-ish fetch loop to skip empty days (limit to 3 empty days at a time to prevent endless loop)
-    // Actually, safer to just fetch one day and let the UI trigger next if empty, but to avoid empty sections, 
-    // let's try to fetch until we find papers or hit a limit (e.g. 5 days back).
-
-    // Current strategy: Fetch ONE day. If it's empty, we still render the date header (or not?), 
-    // and let the observer trigger the next day immediately if it's still in view.
-    // Ideally we want to prevent rendering empty sections. 
-
     try {
-      while (daysTried < 5 && !foundPapers) {
+      const dateStr = format(targetDate, 'yyyy-MM-dd');
+      console.log(`Checking next available date from ${dateStr}...`);
 
-        // Double check against start date inside loop
-        if (startDate && targetDate < startDate) {
-          setHasMore(false);
-          break;
-        }
+      // Find the next date with papers (inclusive of targetDate)
+      const nextDateRes = await axios.get(`${API_URL}/papers/next-date`, {
+        params: { date: dateStr }
+      });
 
-        const dateStr = format(targetDate, 'yyyy-MM-dd');
-        console.log(`Fetching for ${dateStr}`);
+      const nextDateStr = nextDateRes.data.date;
 
-        try {
-          const res = await axios.get(`${API_URL}/papers`, {
-            params: { date: dateStr } // No limiting needed as we want full day
-          });
-
-          const papers = res.data;
-          if (papers.length > 0) {
-            // Client-side filtering for low scores happens during render, 
-            // but we need to know if we effectively have papers to show?
-            // Actually the API returns everything. 
-            // Let's rely on the raw count. 
-
-            // Sort by score
-            papers.sort((a, b) => (b.score || 0) - (a.score || 0));
-
-            newGroups.push({
-              date: targetDate, // Store as Date object
-              papers: papers
-            });
-            foundPapers = true;
-          }
-        } catch (e) {
-          console.error(`Error fetching ${dateStr}`, e);
-        }
-
-        // Prepare for next iteration
-        targetDate = subDays(targetDate, 1);
-        daysTried++;
+      if (!nextDateStr) {
+        console.log("No more papers found.");
+        setHasMore(false);
+        setIsLoading(false);
+        isFetching.current = false;
+        return;
       }
 
-      if (newGroups.length > 0) {
-        setGroups(prev => {
-          // Deduplicate: check if we already have a group for this date
-          const existingDates = new Set(prev.map(g => g.date.toISOString()));
-          const uniqueNewGroups = newGroups.filter(g => !existingDates.has(g.date.toISOString()));
+      console.log(`Fetching papers for ${nextDateStr}`);
+      const res = await axios.get(`${API_URL}/papers`, {
+        params: { date: nextDateStr }
+      });
 
-          if (uniqueNewGroups.length === 0) {
+      const papers = res.data;
+      // Sort by score
+      papers.sort((a, b) => (b.score || 0) - (a.score || 0));
+
+      if (papers.length > 0) {
+        const nextDateObj = new Date(nextDateStr); // Ensure date object from string
+
+        setGroups(prev => {
+          // Deduplicate
+          const existingDates = new Set(prev.map(g => g.date.toISOString()));
+          // We are only adding one group
+          if (existingDates.has(nextDateObj.toISOString())) {
             return prev;
           }
-          return [...prev, ...uniqueNewGroups];
+          return [...prev, { date: nextDateObj, papers }];
         });
-      } else {
-        // If we tried 5 days and found nothing, maybe stop? 
-        // Or just stop for this batch. The user can scroll more (if we didn't block it).
-        // Since we updated cursorDate, next trigger will continue from there.
-        // If we really found NOTHING for 5 days, it's likely we reached the end of time/data. 
-        // But let's verify if we should set hasMore=false. 
-        // For now, let's just assume there might be more later. 
-        // However, if we don't add content, the page height won't grow, so observer might stay in view, triggering loop.
-        // To permit checking deeper history, we must update cursor.
-      }
 
-      setCursorDate(targetDate);
+        // Prepare cursor for NEXT iteration (one day before the one we just fetched)
+        setCursorDate(subDays(nextDateObj, 1));
+      } else {
+        // This shouldn't theoretically happen if next-date returned a date, 
+        // unless papers were deleted between calls or logic mismatch.
+        // Just advance cursor to avoid loop.
+        setCursorDate(subDays(new Date(nextDateStr), 1));
+      }
 
     } catch (error) {
       console.error("Failed to fetch papers", error);
