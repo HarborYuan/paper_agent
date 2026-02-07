@@ -51,8 +51,14 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Ref to track fetching state to prevent race conditions
+  const isFetching = React.useRef(false);
+
   const loadNextDay = async (startTime = null) => {
-    if (isLoading || !hasMore) return;
+    // Check ref instead of state for immediate feedback
+    if (isFetching.current || !hasMore) return;
+
+    isFetching.current = true;
     setIsLoading(true);
 
     let targetDate = startTime || cursorDate;
@@ -61,6 +67,7 @@ function App() {
     if (startDate && targetDate < startDate) {
       setHasMore(false);
       setIsLoading(false);
+      isFetching.current = false;
       return;
     }
 
@@ -119,7 +126,16 @@ function App() {
       }
 
       if (newGroups.length > 0) {
-        setGroups(prev => [...prev, ...newGroups]);
+        setGroups(prev => {
+          // Deduplicate: check if we already have a group for this date
+          const existingDates = new Set(prev.map(g => g.date.toISOString()));
+          const uniqueNewGroups = newGroups.filter(g => !existingDates.has(g.date.toISOString()));
+
+          if (uniqueNewGroups.length === 0) {
+            return prev;
+          }
+          return [...prev, ...uniqueNewGroups];
+        });
       } else {
         // If we tried 5 days and found nothing, maybe stop? 
         // Or just stop for this batch. The user can scroll more (if we didn't block it).
@@ -137,6 +153,7 @@ function App() {
       console.error("Failed to fetch papers", error);
     } finally {
       setIsLoading(false);
+      isFetching.current = false;
     }
   };
 
