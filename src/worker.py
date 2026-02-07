@@ -134,6 +134,65 @@ async def run_worker():
         else:
             print("No notifier configured.")
 
+
+async def process_single_paper(paper_id: str):
+    """
+    Process a single paper: score -> (if good) summarize -> notify (if configured)
+    """
+    print(f"Processing single paper: {paper_id}")
+    
+    # Check if paper exists
+    with Session(engine) as session:
+        paper = session.get(Paper, paper_id)
+    
+    if not paper:
+        print(f"Paper {paper_id} not found in DB.")
+        return
+
+    llm = LLMService()
+    sem = asyncio.Semaphore(1) # processed singly, so limit doesn't matter much
+    
+    # 1. Score
+    # Force status to NEW to ensure scoring runs? Or just run it.
+    if paper.status == "NEW" or paper.status == "FILTERED": 
+        # Re-score if needed
+        await process_paper_score(sem, llm, paper)
+    
+    # Reload to check score
+    with Session(engine) as session:
+        paper = session.get(Paper, paper_id)
+        
+    if not paper: return
+
+    # 2. Summarize
+    if paper.status == "SCORED" or (paper.score and paper.score >= SCORE_THRESHOLD and not paper.summary_personalized):
+        await process_paper_summary(sem, llm, paper)
+        
+    # Reload
+    with Session(engine) as session:
+        paper = session.get(Paper, paper_id)
+        
+    if not paper: return
+
+    # 3. Notify
+    if paper.status == "SUMMARIZED":
+        notifier = get_notifier()
+        if notifier:
+            digest = f"*New Paper Added:*\n\n"
+            digest += f"📄 *{paper.title}* (Score: {paper.score})\n"
+            digest += f"[PDF]({paper.pdf_url})\n"
+            digest += f"tl;dr: {paper.summary_personalized[:200]}...\n\n"
+            
+            success = await notifier.send_message(digest)
+            
+            if success:
+                with Session(engine) as session:
+                    db_p = session.get(Paper, paper.id)
+                    db_p.status = "PUSHED"
+                    session.add(db_p)
+                    session.commit()
+
+
 if __name__ == "__main__":
     from src.database import init_db
     try:

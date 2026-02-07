@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import { format, subDays, isSameDay, isToday, isYesterday } from 'date-fns';
 import Masonry from 'react-masonry-css';
-import { RefreshCw, Zap, ArrowDown } from 'lucide-react';
+import { RefreshCw, Zap, ArrowDown, Plus, X } from 'lucide-react';
 import { useInView } from 'react-intersection-observer';
 import PaperCard from './components/PaperCard';
 import DateGroup from './components/DateGroup';
@@ -16,6 +16,10 @@ function App() {
   const [hasMore, setHasMore] = useState(true);
   const [running, setRunning] = useState(false);
   const [showLowScore, setShowLowScore] = useState(false);
+
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [addInput, setAddInput] = useState("");
+  const [addingPaper, setAddingPaper] = useState(false);
 
   const [startDate, setStartDate] = useState(null); // Earliest paper date
 
@@ -174,6 +178,28 @@ function App() {
     }
   };
 
+  const handleAddPaper = async (e) => {
+    e.preventDefault();
+    if (!addInput.trim()) return;
+
+    setAddingPaper(true);
+    try {
+      const res = await axios.post(`${API_URL}/papers/add`, { input: addInput });
+      alert(`Success: ${res.data.message}`);
+      setAddInput("");
+      setShowAddModal(false);
+
+      setGroups([]);
+      setCursorDate(new Date());
+      loadNextDay(new Date());
+    } catch (error) {
+      console.error("Failed to add paper", error);
+      alert(`Error: ${error.response?.data?.detail || error.message}`);
+    } finally {
+      setAddingPaper(false);
+    }
+  };
+
   // Filter papers for display
   const getFilteredGroupPapers = (groupPapers) => {
     return groupPapers.filter(paper => {
@@ -225,8 +251,69 @@ function App() {
             <RefreshCw size={18} className={running ? 'animate-spin' : ''} />
             {running ? 'Processing...' : 'Fetch New'}
           </button>
+
+          <button
+            onClick={() => setShowAddModal(true)}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg font-bold bg-slate-700 text-slate-200 hover:bg-slate-600 transition-all"
+          >
+            <Plus size={18} />
+            Add Paper
+          </button>
         </div>
       </header>
+
+      {/* Add Paper Modal */}
+      {showAddModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-slate-800 rounded-2xl p-6 w-full max-w-md shadow-2xl border border-slate-700">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-xl font-bold text-white">Add Paper</h3>
+              <button
+                onClick={() => setShowAddModal(false)}
+                className="text-slate-400 hover:text-white"
+              >
+                <X size={24} />
+              </button>
+            </div>
+
+            <form onSubmit={handleAddPaper}>
+              <div className="mb-4">
+                <label className="block text-slate-400 text-sm font-bold mb-2">
+                  arXiv ID or URL
+                </label>
+                <input
+                  type="text"
+                  value={addInput}
+                  onChange={(e) => setAddInput(e.target.value)}
+                  placeholder="e.g. 1512.03385 or https://arxiv.org/abs/1512.03385"
+                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-cyan-500 transition-colors"
+                  autoFocus
+                />
+                <p className="text-xs text-slate-500 mt-2">
+                  Supports abstract URLs and PDF URLs.
+                </p>
+              </div>
+
+              <div className="flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowAddModal(false)}
+                  className="px-4 py-2 rounded-lg font-medium text-slate-300 hover:bg-slate-700 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={addingPaper || !addInput.trim()}
+                  className={`px-4 py-2 rounded-lg font-bold text-slate-900 transition-colors ${addingPaper || !addInput.trim() ? 'bg-slate-600 cursor-not-allowed' : 'bg-cyan-500 hover:bg-cyan-400'}`}
+                >
+                  {addingPaper ? 'Adding...' : 'Add Paper'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Content */}
       <main className="max-w-7xl mx-auto space-y-8 pb-20">
