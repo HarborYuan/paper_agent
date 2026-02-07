@@ -177,6 +177,60 @@ def get_next_date(date: str, session: Session = Depends(get_session)):
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
 
+@app.get("/papers/{paper_id}", response_model=Paper)
+def get_paper(paper_id: str, session: Session = Depends(get_session)):
+    paper = session.get(Paper, paper_id)
+    if not paper:
+        raise HTTPException(status_code=404, detail="Paper not found")
+    return paper
+
+# In-memory store for rate limiting: date_str -> last_run_timestamp
+RESCORE_LAST_RUN = {}
+
+@app.post("/papers/re-score-date")
+async def rescore_date(date: str, background_tasks: BackgroundTasks, session: Session = Depends(get_session)):
+    """
+    Trigger re-scoring for all papers on a specific date.
+    Rate limited to once per 60 seconds per date.
+    """
+    try:
+        # Rate Limiting
+        now = datetime.now()
+        last_run = RESCORE_LAST_RUN.get(date)
+        if last_run:
+            elapsed = (now - last_run).total_seconds()
+            if elapsed < 60:
+                raise HTTPException(
+                    status_code=429, 
+                    detail=f"Please wait {int(60 - elapsed)} seconds before re-scoring this date again."
+                )
+        
+        target_date = datetime.strptime(date, "%Y-%m-%d").date()
+        
+        # Select all papers for this date
+        query = select(Paper).where(
+            Paper.published_at >= datetime.combine(target_date, datetime.min.time()),
+            Paper.published_at <= datetime.combine(target_date, datetime.max.time())
+        )
+        papers = session.exec(query).all()
+        
+        if not papers:
+            return {"message": f"No papers found for date {date}"}
+            
+        print(f"Triggering re-score for {len(papers)} papers on {date}")
+        
+        # Update timestamp
+        RESCORE_LAST_RUN[date] = now
+        
+        for paper in papers:
+            # Pass force_rescore=True
+            background_tasks.add_task(process_single_paper, paper.id, True)
+            
+        return {"message": f"Started re-scoring for {len(papers)} papers on {date}"}
+        
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+
 @app.get("/")
 def read_root():
     return {"message": "Welcome to Paper Agent. POST /run to start processing."}

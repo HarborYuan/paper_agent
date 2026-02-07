@@ -135,11 +135,11 @@ async def run_worker():
             print("No notifier configured.")
 
 
-async def process_single_paper(paper_id: str):
+async def process_single_paper(paper_id: str, force_rescore: bool = False):
     """
     Process a single paper: score -> (if good) summarize -> notify (if configured)
     """
-    print(f"Processing single paper: {paper_id}")
+    print(f"Processing single paper: {paper_id} (force_rescore={force_rescore})")
     
     # Check if paper exists
     with Session(engine) as session:
@@ -154,7 +154,7 @@ async def process_single_paper(paper_id: str):
     
     # 1. Score
     # Force status to NEW to ensure scoring runs? Or just run it.
-    if paper.status == "NEW" or paper.status == "FILTERED": 
+    if force_rescore or paper.status == "NEW" or paper.status == "FILTERED": 
         # Re-score if needed
         await process_paper_score(sem, llm, paper)
     

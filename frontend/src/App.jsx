@@ -9,7 +9,10 @@ import DateGroup from './components/DateGroup';
 
 const API_URL = 'http://localhost:8000';
 
-function App() {
+import { BrowserRouter, Routes, Route, useNavigate } from 'react-router-dom';
+import PaperDetail from './pages/PaperDetail';
+
+function AppContent() {
   const [groups, setGroups] = useState([]); // Array of { date: Date, papers: Paper[] }
   const [cursorDate, setCursorDate] = useState(new Date());
   const [isLoading, setIsLoading] = useState(false);
@@ -43,7 +46,8 @@ function App() {
       try {
         const res = await axios.get(`${API_URL}/papers/start-date`);
         if (res.data.date) {
-          setStartDate(new Date(res.data.date));
+          const [y, m, d] = res.data.date.split('-').map(Number);
+          setStartDate(new Date(y, m - 1, d));
         }
       } catch (e) {
         console.error("Failed to fetch start date", e);
@@ -104,7 +108,9 @@ function App() {
       papers.sort((a, b) => (b.score || 0) - (a.score || 0));
 
       if (papers.length > 0) {
-        const nextDateObj = new Date(nextDateStr); // Ensure date object from string
+        // Parse "YYYY-MM-DD" manually to ensure local time (avoiding UTC conversion shift)
+        const [y, m, d] = nextDateStr.split('-').map(Number);
+        const nextDateObj = new Date(y, m - 1, d);
 
         setGroups(prev => {
           // Deduplicate
@@ -147,6 +153,22 @@ function App() {
     } catch (error) {
       console.error("Failed to trigger run", error);
       setRunning(false);
+    }
+  };
+
+  const handleReScoreDate = async (date) => {
+    const dateStr = format(date, 'yyyy-MM-dd');
+    const confirm = window.confirm(`Are you sure you want to re-score all papers from ${dateStr}?`);
+    if (!confirm) return;
+
+    try {
+      await axios.post(`${API_URL}/papers/re-score-date`, null, {
+        params: { date: dateStr }
+      });
+      alert(`Re-scoring started for ${dateStr}. Please refresh in a few moments.`);
+    } catch (error) {
+      console.error("Failed to re-score date", error);
+      alert("Failed to trigger re-scoring.");
     }
   };
 
@@ -299,7 +321,10 @@ function App() {
 
           return (
             <section key={group.date.toISOString()}>
-              <DateGroup dateLabel={label} />
+              <DateGroup
+                dateLabel={label}
+                onReRank={() => handleReScoreDate(group.date)}
+              />
               <Masonry
                 breakpointCols={masonryBreakpoints}
                 className="flex -ml-6 w-auto"
@@ -329,6 +354,17 @@ function App() {
         )}
       </main>
     </div>
+  );
+}
+
+function App() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<AppContent />} />
+        <Route path="/paper/:id" element={<PaperDetail />} />
+      </Routes>
+    </BrowserRouter>
   );
 }
 

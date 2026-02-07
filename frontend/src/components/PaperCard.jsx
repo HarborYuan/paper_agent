@@ -2,6 +2,7 @@ import React from 'react';
 import { motion } from 'framer-motion';
 import { FileText, Calendar, Users, Tag, ExternalLink, Star, Building2 } from 'lucide-react';
 import { format } from 'date-fns';
+import { useNavigate } from 'react-router-dom';
 
 // Import Logos
 import bytedanceLogo from '../assets/logos/bytedance.svg';
@@ -38,6 +39,7 @@ const MATCH_KEYS = Object.keys(LOGO_MAP)
     }));
 
 const PaperCard = ({ paper }) => {
+    const navigate = useNavigate();
     const {
         title,
         authors, // Changed from authors_list
@@ -88,9 +90,14 @@ const PaperCard = ({ paper }) => {
         ];
     }
 
-    // Format Date
-    const dateObj = new Date(published_at);
-    const formattedDate = format(dateObj, 'MMM d, yyyy');
+    // Format Date (UTC)
+    // Ensure the date string is treated as UTC
+    const dateStr = published_at.endsWith('Z') ? published_at : `${published_at}Z`;
+    const dateObj = new Date(dateStr);
+    const formattedDate = format(
+        new Date(dateObj.getUTCFullYear(), dateObj.getUTCMonth(), dateObj.getUTCDate()),
+        'MMM d, yyyy'
+    );
 
     // Logo Logic
     let logoSrc = null;
@@ -112,7 +119,8 @@ const PaperCard = ({ paper }) => {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95 }}
             whileHover={{ y: -5, transition: { duration: 0.2 } }}
-            className="bg-slate-800/50 backdrop-blur-md border border-slate-700/50 rounded-xl p-5 shadow-lg hover:shadow-cyan-500/10 hover:border-cyan-500/30 transition-all duration-300 group overflow-hidden relative"
+            onClick={() => navigate(`/paper/${paper.id}`)}
+            className="bg-slate-800/50 backdrop-blur-md border border-slate-700/50 rounded-xl p-5 shadow-lg hover:shadow-cyan-500/10 hover:border-cyan-500/30 transition-all duration-300 group overflow-hidden relative cursor-pointer"
         >
             {/* Glow Effect */}
             <div className="absolute -inset-0.5 bg-gradient-to-r from-cyan-500 to-purple-600 opacity-0 group-hover:opacity-10 transition duration-500 blur-lg" />
@@ -164,9 +172,7 @@ const PaperCard = ({ paper }) => {
                     </p>
                 </div>
 
-                {/* Affiliation (Text Only if No Logo in this section, per request "remove text badge, place logo in bottom right") */}
-                {/* If no logo found, show affiliation text. Even if logo found, user said "Don't write company name LIKE now". 
-                  But main_affiliation might be University. So we kept main_affiliation logic but removed companyBadge text. */}
+                {/* Affiliation */}
                 {(main_affiliation) && (
                     <div className="flex items-center gap-2 mb-3">
                         <div className="flex items-center gap-1.5 text-xs text-slate-400 line-clamp-1">
