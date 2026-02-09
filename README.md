@@ -60,3 +60,28 @@ A FastAPI-based agent to fetch, score, summarize, and notify you about new arXiv
      ```bash
      curl "http://localhost:8000/papers?date=2024-02-03"
      ```
+
+## Docker Deployment (NAS / LinuxServer style)
+
+This project supports a LinuxServer.io-style Docker deployment, running both the backend and frontend in a single container.
+
+1. **Build the image**:
+   ```bash
+   docker build -t paper-agent .
+   ```
+
+2. **Run with Docker Compose**:
+   Ensure your `docker-compose.yml` is configured (update environment variables as needed):
+   ```bash
+   docker-compose up -d
+   ```
+
+3. **Environment Variables**:
+   - `PUID`/`PGID`: User/Group ID to run as (default 1000).
+   - `DATABASE_URL`: Path to sqlite db (e.g. `sqlite:////config/paper_agent.db`).
+   - `OPENAI_API_KEY`: Your OpenAI API key.
+
+4. **Access**:
+   - Web UI: http://localhost:8000
+   - API Docs: http://localhost:8000/docs
+

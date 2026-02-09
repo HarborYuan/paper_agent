@@ -7,6 +7,7 @@ from src.config import settings
 from src.models import Paper
 from src.services.prompt_service import prompt_service
 from src.services.pdf_service import pdf_service
+from src.utils import sanitize_text
 
 class ScoreResponse(BaseModel):
     score: int
@@ -54,6 +55,9 @@ class LLMService:
         """
         Generate a structured summary for a high-scoring paper.
         """
+        if full_text:
+            full_text = sanitize_text(full_text)
+            
         prompt = prompt_service.render_prompt("summarization.jinja2", paper=paper, full_text=full_text)
         
         try:
@@ -72,6 +76,9 @@ class LLMService:
         Extract affiliations from paper text.
         We use the first ~4000 chars of full text as it usually contains the header/affiliations.
         """
+        if full_text:
+            full_text = sanitize_text(full_text) or ""
+            
         text_snippet = full_text[:4000]
         prompt = prompt_service.render_prompt("affiliation.jinja2", text_snippet=text_snippet)
         

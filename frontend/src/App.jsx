@@ -11,7 +11,7 @@ import DateGroup from './components/DateGroup';
 import PaperDetail from './pages/PaperDetail';
 import LogViewer from './components/LogViewer';
 
-const API_URL = 'http://localhost:8000';
+const API_URL = ''; // Relative path since we serve from the same origin in Docker/Production
 
 function AppContent() {
   const [groups, setGroups] = useState([]); // Array of { date: Date, papers: Paper[] }

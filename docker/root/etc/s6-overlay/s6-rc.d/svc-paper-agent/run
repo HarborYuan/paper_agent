@@ -1,0 +1,22 @@
+#!/bin/bash
+cd /app
+# Check if .env exists in /config (the volume)
+if [ ! -f /config/.env ]; then
+    echo "No .env found in /config. Creating from example..."
+    if [ -f .env.example ]; then
+        cp .env.example /config/.env
+        # Update DATABASE_URL to point to /config volume in Docker
+        sed -i 's|sqlite:///data/paper_agent.db|sqlite:////config/paper_agent.db|g' /config/.env
+    else
+        echo "No .env.example found. Creating empty .env in /config"
+        touch /config/.env
+    fi
+    # Fix permissions so user abc can read/write
+    chown abc:abc /config/.env
+fi
+
+# Link /config/.env to /app/.env just in case, though config.py handles it
+# ln -sf /config/.env /app/.env
+
+# exec ensures the process replaces the shell, handling signals correctly
+exec s6-setuidgid abc uv run uvicorn src.main:app --host 0.0.0.0 --port 8000

@@ -19,6 +19,11 @@ class Settings(BaseSettings):
     Avoid: Network Security, Pure Math, HCI.
     """
 
-    model_config = SettingsConfigDict(env_file=".env")
+    model_config = SettingsConfigDict(
+        # Load from /config/.env (Docker volume) first, then local .env
+        env_file=["/config/.env", ".env"],
+        env_file_encoding='utf-8',
+        extra="ignore"
+    )
 
 settings = Settings()

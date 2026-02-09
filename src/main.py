@@ -240,6 +240,29 @@ async def rescore_date(date: str, background_tasks: BackgroundTasks, session: Se
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
 
-@app.get("/")
+@app.get("/health")
 def read_root():
-    return {"message": "Welcome to Paper Agent. POST /run to start processing."}
+    return {"message": "Welcome to Paper Agent. POST /run to start processing.", "docs": "/docs"}
+
+# Serve frontend static files if they exist (Docker/Deployment mode)
+# This mimics the behavior of nginx serving the frontend
+import os
+from fastapi.staticfiles import StaticFiles
+
+frontend_dist = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend", "dist")
+if os.path.exists(frontend_dist):
+    # Mount assets first to ensure they are served correctly
+    # (Vite builds usually put assets in /assets)
+    # But mounting root with html=True handles index.html and traversing
+    
+    # However, for SPA client-side routing to work (e.g. /papers/123), 
+    # we might need a catch-all route if StaticFiles doesn't find the file.
+    # For now, let's keep it simple: mount / to dist.
+    # Note: This obscures the `read_root` above if we are not careful, 
+    # but FastAPI checks routes in order. `read_root` is defined BEFORE `app.mount`.
+    # Wait, `app.mount("/", ...)` matches everything. 
+    # If `read_root` is defined @app.get("/"), does it take precedence?
+    # Yes, path operations declared before valid mounts usually work.
+    # But `mount` at `/` is a catch-all.
+    
+    app.mount("/", StaticFiles(directory=frontend_dist, html=True), name="static")
