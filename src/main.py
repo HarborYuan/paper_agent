@@ -1,14 +1,16 @@
-from fastapi import FastAPI, BackgroundTasks, HTTPException, Depends, Query
+from fastapi import FastAPI, BackgroundTasks, HTTPException, Depends, Query, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import Session, select, SQLModel
 from typing import List, Optional
 from datetime import datetime
 from contextlib import asynccontextmanager
+import re
 
 from src.database import init_db, get_session, engine
 from src.models import Paper
 from src.worker import run_worker, process_single_paper
 from src.services.arxiv import ArxivFetcher
-import re
+from src.logger import logger
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -22,8 +24,6 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Paper Agent API", lifespan=lifespan)
 
-from fastapi.middleware.cors import CORSMiddleware
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://localhost:3000"],
@@ -31,6 +31,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.websocket("/ws/logs")
+async def websocket_endpoint(websocket: WebSocket):
+    await logger.connect(websocket)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        logger.disconnect(websocket)
 
 @app.post("/run")
 async def trigger_run(background_tasks: BackgroundTasks):

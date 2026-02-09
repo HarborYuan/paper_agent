@@ -1,19 +1,72 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import axios from 'axios';
-import { format, subDays, isSameDay, isToday, isYesterday } from 'date-fns';
+import { format, subDays, isToday, isYesterday } from 'date-fns';
 import Masonry from 'react-masonry-css';
-import { RefreshCw, Zap, ArrowDown, Plus, X } from 'lucide-react';
+import { RefreshCw, Zap, Plus, X, Terminal } from 'lucide-react';
 import { useInView } from 'react-intersection-observer';
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
+
 import PaperCard from './components/PaperCard';
 import DateGroup from './components/DateGroup';
+import PaperDetail from './pages/PaperDetail';
+import LogViewer from './components/LogViewer';
 
 const API_URL = 'http://localhost:8000';
 
-import { BrowserRouter, Routes, Route, useNavigate } from 'react-router-dom';
-import PaperDetail from './pages/PaperDetail';
-
 function AppContent() {
   const [groups, setGroups] = useState([]); // Array of { date: Date, papers: Paper[] }
+  const [showLogs, setShowLogs] = useState(false);
+  const [logs, setLogs] = useState([]);
+  const ws = React.useRef(null);
+
+  useEffect(() => {
+    let timeoutId = null;
+    let shouldReconnect = true;
+
+    const connect = () => {
+      // If already connected, do nothing
+      if (ws.current && (ws.current.readyState === WebSocket.OPEN || ws.current.readyState === WebSocket.CONNECTING)) {
+        return;
+      }
+
+      console.log("Connecting to WebSocket...");
+      const socket = new WebSocket('ws://localhost:8000/ws/logs');
+      ws.current = socket;
+
+      socket.onopen = () => {
+        setLogs(prev => [...prev, '[System] Connected to log stream...']);
+      };
+
+      socket.onmessage = (event) => {
+        setLogs(prev => [...prev, event.data]);
+      };
+
+      socket.onclose = () => {
+        if (shouldReconnect) {
+          setLogs(prev => [...prev, '[System] Disconnected from log stream. Reconnecting in 3s...']);
+          timeoutId = setTimeout(connect, 3000);
+        } else {
+          setLogs(prev => [...prev, '[System] Disconnected from log stream.']);
+        }
+      };
+
+      socket.onerror = (err) => {
+        console.error("WS Error", err);
+        socket.close(); // Ensure close is called to trigger onclose
+      };
+    };
+
+    connect();
+
+    return () => {
+      shouldReconnect = false;
+      if (timeoutId) clearTimeout(timeoutId);
+      if (ws.current) {
+        ws.current.close();
+      }
+    };
+  }, []);
+
   const [cursorDate, setCursorDate] = useState(new Date());
   const [isLoading, setIsLoading] = useState(false);
   const [hasMore, setHasMore] = useState(true);
@@ -202,14 +255,21 @@ function AppContent() {
     });
   };
 
+
+
   const masonryBreakpoints = {
     default: 3,
     1100: 2,
     700: 1
   };
 
+
+
+
   return (
     <div className="min-h-screen bg-[#0f172a] text-slate-200 p-6 md:p-12 font-sans selection:bg-cyan-500/30">
+
+      <LogViewer isOpen={showLogs} onClose={() => setShowLogs(false)} logs={logs} onClear={() => setLogs([])} />
 
       {/* Header */}
       <header className="max-w-7xl mx-auto mb-12 flex justify-between items-end">
@@ -224,6 +284,15 @@ function AppContent() {
         </div>
 
         <div className="flex items-center gap-4">
+          {/* Logs Button */}
+          <button
+            onClick={() => setShowLogs(true)}
+            className="flex items-center gap-2 px-3 py-2 rounded-lg font-bold bg-slate-800 text-cyan-400 hover:bg-slate-700 transition-all border border-slate-700"
+            title="View Logs"
+          >
+            <Terminal size={18} />
+          </button>
+
           {/* Toggle */}
           <div className="flex items-center gap-2">
             <span className={`text-sm font-medium ${showLowScore ? 'text-slate-200' : 'text-slate-500'}`}>Low Scores</span>

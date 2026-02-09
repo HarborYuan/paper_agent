@@ -4,10 +4,18 @@ TASK:
 Extract the affiliations from the provided paper text and identify the main affiliation.
 
 RULES for "main_affiliation":
-1. If there are likely students from a university and staff from a company, the main affiliation is the COMPANY.
-2. If all authors are from a university, the main affiliation is the FIRST AUTHOR'S UNIVERSITY.
-3. If affiliations are mixed/complex and no clear company dominance, consider the first and last authors' affiliations.
-4. Distinguish famous AI labs (e.g. "ByteDance Seed" vs "ByteDance", "Google DeepMind" vs "Google", "FAIR" vs "Meta").
+1. **Analyze Leadership (School vs Company):**
+   - **Likely COMPANY Main Affiliation if:**
+     - The majority of authors are from a company.
+     - The First Author OR Last Author is from a company.
+     - The paper explicitly highlights that the work was done during an internship at a company.
+   - **Likely UNIVERSITY Main Affiliation if:**
+     - Only middle authors are from a company.
+     - Both First Author AND Last Author are from a university, and there is no mention of internship.
+     - The corresponding author is solely from a university.
+2. ** internships:** Pay close attention to footnotes or author bios mentioning "Work done during an internship at [Company]". In this case, the main affiliation is likely the COMPANY.
+3. **Complex Cases:** If affiliations are mixed, prioritize the entity that seems to have led the project (usually indicated by First/Last author and computing resources used).
+4. **Distinguish Famous AI Labs:** (e.g. "ByteDance Seed" vs "ByteDance", "Google DeepMind" vs "Google", "FAIR" vs "Meta").
 
 RULES for Formatting (CRITICAL):
 1. **Universities (US):** Use standard abbreviations for well-known US universities. Examples:
@@ -27,6 +35,7 @@ RULES for Formatting (CRITICAL):
    - "Meta Reality Labs"
    - "ByteDance Seed"
    - "Microsoft Research"
+   - "Meta Superintelligence Labs"
 
 OUTPUT FORMAT (JSON):
 {

@@ -1,6 +1,6 @@
 import asyncio
 import json
-from typing import List
+
 from sqlmodel import Session, select
 from src.database import engine
 from src.config import settings
@@ -10,6 +10,7 @@ from src.services.llm import LLMService
 from src.services.notifier import get_notifier
 from src.services.pdf_service import pdf_service
 from src.utils import sanitize_text
+from src.logger import logger
 
 SCORE_THRESHOLD = 85
 CONCURRENCY_LIMIT = 5
@@ -17,7 +18,7 @@ PAPER_SYNC_LIMIT = 500
 
 async def process_paper_score(sem: asyncio.Semaphore, llm: LLMService, paper: Paper):
     async with sem:
-        print(f"Scoring paper: {paper.id}")
+        await logger.log(f"Scoring paper: {paper.id}")
         score_data = await llm.score_paper(paper, settings.USER_PROFILE)
         
         with Session(engine) as session:
@@ -34,7 +35,7 @@ async def process_paper_score(sem: asyncio.Semaphore, llm: LLMService, paper: Pa
 
 async def process_paper_summary(sem: asyncio.Semaphore, llm: LLMService, paper: Paper):
     async with sem:
-        print(f"Summarizing paper: {paper.id}")
+        await logger.log(f"Summarizing paper: {paper.id}")
         
         # Need to re-fetch paper from DB or just use passed object? Passed object is detached or from session?
         # Better to fetch full text here.
@@ -44,15 +45,15 @@ async def process_paper_summary(sem: asyncio.Semaphore, llm: LLMService, paper: 
         
         affiliations = None
         if full_text:
-            print(f"  - Extracted full text for {paper.id}")
+            await logger.log(f"  - Extracted full text for {paper.id}")
             # Extract affiliations
             aff_data = await llm.extract_affiliations(paper, full_text)
             if aff_data:
-                print(f"  - Affiliations: {aff_data.main_affiliation}")
+                await logger.log(f"  - Affiliations: {aff_data.main_affiliation}")
             # Summarize with full text
             summary = await llm.summarize_paper(paper, full_text=full_text)
         else:
-            print(f"  - Full text not available for {paper.id}")
+            await logger.log(f"  - Full text not available for {paper.id}")
             summary = await llm.summarize_paper(paper)
         
         with Session(engine) as session:
@@ -75,12 +76,12 @@ async def process_paper_summary(sem: asyncio.Semaphore, llm: LLMService, paper: 
                 session.commit()
 
 async def run_worker():
-    print("Starting worker cycle...")
+    await logger.log("Starting worker cycle...")
     
     # 1. Fetch
     fetcher = ArxivFetcher(categories=settings.ARXIV_CATEGORIES)
     # 2000 for MVP; usually good enough
-    fetched_papers = fetcher.fetch_papers(max_results=PAPER_SYNC_LIMIT)
+    fetched_papers = await asyncio.to_thread(fetcher.fetch_papers, max_results=PAPER_SYNC_LIMIT)
     new_papers = fetcher.filter_new_papers(fetched_papers)
     fetcher.save_papers(new_papers)
     
@@ -93,7 +94,7 @@ async def run_worker():
         papers_to_score = session.exec(statement).all()
         
     if papers_to_score:
-        print(f"Scoring {len(papers_to_score)} papers...")
+        await logger.log(f"Scoring {len(papers_to_score)} papers...")
         await asyncio.gather(*[process_paper_score(sem, llm, p) for p in papers_to_score])
     
     # 3. Summarize SCORED papers (High score)
@@ -102,7 +103,7 @@ async def run_worker():
         papers_to_summarize = session.exec(statement).all()
         
     if papers_to_summarize:
-        print(f"Summarizing {len(papers_to_summarize)} papers...")
+        await logger.log(f"Summarizing {len(papers_to_summarize)} papers...")
         await asyncio.gather(*[process_paper_summary(sem, llm, p) for p in papers_to_summarize])
         
     # 4. Notify
@@ -111,7 +112,7 @@ async def run_worker():
         papers_to_notify = session.exec(statement).all()
         
     if papers_to_notify:
-        print(f"Notifying {len(papers_to_notify)} papers...")
+        await logger.log(f"Notifying {len(papers_to_notify)} papers...")
         notifier = get_notifier()
         if notifier:
             digest = f"*Daily Paper Digest ({len(papers_to_notify)} papers)*\n\n"
@@ -132,21 +133,21 @@ async def run_worker():
                         session.add(db_p)
                     session.commit()
         else:
-            print("No notifier configured.")
+            await logger.log("No notifier configured.")
 
 
 async def process_single_paper(paper_id: str, force_rescore: bool = False):
     """
     Process a single paper: score -> (if good) summarize -> notify (if configured)
     """
-    print(f"Processing single paper: {paper_id} (force_rescore={force_rescore})")
+    await logger.log(f"Processing single paper: {paper_id} (force_rescore={force_rescore})")
     
     # Check if paper exists
     with Session(engine) as session:
         paper = session.get(Paper, paper_id)
     
     if not paper:
-        print(f"Paper {paper_id} not found in DB.")
+        await logger.log(f"Paper {paper_id} not found in DB.")
         return
 
     llm = LLMService()
