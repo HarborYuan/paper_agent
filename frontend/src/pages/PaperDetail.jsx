@@ -4,7 +4,7 @@ import axios from 'axios';
 import { ArrowLeft, Calendar, Users, ExternalLink, Star, Building2, Tag } from 'lucide-react';
 import { format } from 'date-fns';
 
-const API_URL = 'http://localhost:8000';
+const API_URL = '';
 
 const PaperDetail = () => {
     const { id } = useParams();
