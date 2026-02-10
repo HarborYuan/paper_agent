@@ -1,5 +1,7 @@
 # Paper Agent
 
+[![Docker Build and Publish](https://github.com/HarborYuan/paper_agent/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/HarborYuan/paper_agent/actions/workflows/docker-publish.yml)
+
 A FastAPI-based agent to fetch, score, summarize, and notify you about new arXiv papers daily.
 
 ## Features
