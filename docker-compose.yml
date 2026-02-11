@@ -1,19 +1,18 @@
 ---
 services:
   paper-agent:
-    image: paper-agent:latest
+    image: harbory/paper-agent:latest
     container_name: paper-agent
     environment:
       - PUID=1000
       - PGID=1000
-      - TZ=Etc/UTC
+      - TZ=UTC
+      # priority: 
+      # ENV VARIABLES -> /config/.env -> .env.example
       # - DATABASE_URL=sqlite:////config/paper_agent.db
-      - OPENAI_API_KEY=sk-your-key-here
-      - ENABLE_AUTO_UPDATE=true
-      - AUTO_UPDATE_TIME=03:00 # UTC, usual release time of arxiv
-      # Optional: Notifications
-      # - TELEGRAM_BOT_TOKEN=...
-      # - TELEGRAM_CHAT_ID=...
+      # - OPENAI_API_KEY=sk-your-key-here
+      # - ENABLE_AUTO_UPDATE=true
+      # - AUTO_UPDATE_TIME=03:00 # UTC, usual release time of arxiv
     volumes:
       - ./data:/config
     ports:
