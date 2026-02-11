@@ -1,4 +1,7 @@
 #!/bin/bash
+# Ensure /config is writable by abc so the DB can be created and .env checked
+chown -R abc:abc /config
+
 cd /app
 # Check if .env exists in /config (the volume)
 if [ ! -f /config/.env ]; then
