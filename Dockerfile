@@ -37,6 +37,8 @@ COPY --from=frontend-builder /web/dist ./frontend/dist
 # LinuxServer base suggests not messing with system python too much, 
 # but we are in a container.
 # Let's verify standard uv usage.
+ENV UV_PYTHON_INSTALL_DIR="/app/.uv_python"
+ENV UV_CACHE_DIR="/app/.uv_cache"
 RUN uv sync --frozen
 
 # Fix permissions for /app so user abc can write to it (e.g. .venv, logs if any)
