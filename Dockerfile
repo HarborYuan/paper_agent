@@ -10,7 +10,7 @@ RUN npm run build
 FROM ghcr.io/linuxserver/baseimage-alpine:3.20
 
 # set version label
-LABEL maintainer="PaperAgent"
+LABEL maintainer="https://github.com/HarborYuan/paper_agent"
 
 # Install python/pip/uv and system dependencies
 # git is often needed for installing dependencies from git
@@ -38,6 +38,10 @@ COPY --from=frontend-builder /web/dist ./frontend/dist
 # but we are in a container.
 # Let's verify standard uv usage.
 RUN uv sync --frozen
+
+# Fix permissions for /app so user abc can write to it (e.g. .venv, logs if any)
+RUN chown -R abc:abc /app
+
 
 # Expose port
 EXPOSE 8000
