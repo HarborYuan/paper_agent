@@ -18,6 +18,7 @@ RUN apk add --no-cache \
     python3 \
     py3-pip \
     git \
+    tzdata \
     && pip3 install --break-system-packages uv
 
 # Copy local files

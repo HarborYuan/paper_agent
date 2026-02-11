@@ -16,7 +16,7 @@ fi
 
 # Fix potential wrong database path in .env (whether newly created or existing)
 # If it points to /data/ (default), change it to /config/ (volume)
-sed -i 's|sqlite:///data/paper_agent.db|sqlite:////config/paper_agent.db|g' /config/.env
+sed -i 's|sqlite:///data/paper_agent.db|sqlite:///config/paper_agent.db|g' /config/.env
 
 # Fix permissions so user abc can read/write the .env file
 chown abc:abc /config/.env
