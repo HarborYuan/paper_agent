@@ -24,5 +24,8 @@ chown abc:abc /config/.env
 # Link /config/.env to /app/.env just in case, though config.py handles it
 # ln -sf /config/.env /app/.env
 
+export UV_PYTHON_INSTALL_DIR="/app/.uv_python"
+export UV_CACHE_DIR="/app/.uv_cache"
+
 # exec ensures the process replaces the shell, handling signals correctly
 exec s6-setuidgid abc uv run uvicorn src.main:app --host 0.0.0.0 --port 8000
