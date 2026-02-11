@@ -16,6 +16,7 @@ dependencies = [
     "sqlmodel>=0.0.31",
     "uvicorn>=0.40.0",
     "websockets>=16.0",
+    "apscheduler>=3.10.4",
 ]
 
 [dependency-groups]

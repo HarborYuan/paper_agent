@@ -13,6 +13,10 @@ class Settings(BaseSettings):
     PUSHOVER_API_TOKEN: str | None = None
     ARXIV_CATEGORIES: List[str] = ["cs.CV", "cs.CL", "cs.AI"]
     
+    # Auto Update
+    ENABLE_AUTO_UPDATE: bool = False
+    AUTO_UPDATE_TIME: str = "04:00" # UTC
+
     USER_PROFILE: str = """
     I am interested in Computer Vision and Multi-modal Learning.
     Keywords: Video Understanding, VLM, Segmentation, Reasoning, 3D.

@@ -11,16 +11,21 @@ from src.models import Paper
 from src.worker import run_worker, process_single_paper
 from src.services.arxiv import ArxivFetcher
 from src.logger import logger
+from src.scheduler import SchedulerService
+
+scheduler_service = SchedulerService()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
     try:
         init_db()
+        scheduler_service.start()
     except Exception as e:
-        print(f"DB Init Error: {e}")
+        print(f"DB/Scheduler Init Error: {e}")
     yield
     # Shutdown (if needed)
+    scheduler_service.shutdown()
 
 app = FastAPI(title="Paper Agent API", lifespan=lifespan)
 

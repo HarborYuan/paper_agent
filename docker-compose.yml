@@ -9,6 +9,8 @@ services:
       - TZ=Etc/UTC
       # - DATABASE_URL=sqlite:////config/paper_agent.db
       - OPENAI_API_KEY=sk-your-key-here
+      - ENABLE_AUTO_UPDATE=true
+      - AUTO_UPDATE_TIME=03:00 # UTC, usual release time of arxiv
       # Optional: Notifications
       # - TELEGRAM_BOT_TOKEN=...
       # - TELEGRAM_CHAT_ID=...
