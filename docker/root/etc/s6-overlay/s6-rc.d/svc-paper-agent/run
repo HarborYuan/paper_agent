@@ -8,15 +8,18 @@ if [ ! -f /config/.env ]; then
     echo "No .env found in /config. Creating from example..."
     if [ -f .env.example ]; then
         cp .env.example /config/.env
-        # Update DATABASE_URL to point to /config volume in Docker
-        sed -i 's|sqlite:///data/paper_agent.db|sqlite:////config/paper_agent.db|g' /config/.env
     else
         echo "No .env.example found. Creating empty .env in /config"
         touch /config/.env
     fi
-    # Fix permissions so user abc can read/write
-    chown abc:abc /config/.env
 fi
+
+# Fix potential wrong database path in .env (whether newly created or existing)
+# If it points to /data/ (default), change it to /config/ (volume)
+sed -i 's|sqlite:///data/paper_agent.db|sqlite:////config/paper_agent.db|g' /config/.env
+
+# Fix permissions so user abc can read/write the .env file
+chown abc:abc /config/.env
 
 # Link /config/.env to /app/.env just in case, though config.py handles it
 # ln -sf /config/.env /app/.env
