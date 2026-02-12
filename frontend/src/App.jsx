@@ -30,7 +30,9 @@ function AppContent() {
       }
 
       console.log("Connecting to WebSocket...");
-      const socket = new WebSocket('ws://localhost:8000/ws/logs');
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${protocol}//${window.location.host}/ws/logs`;
+      const socket = new WebSocket(wsUrl);
       ws.current = socket;
 
       socket.onopen = () => {
