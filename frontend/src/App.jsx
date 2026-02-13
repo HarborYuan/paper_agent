@@ -73,7 +73,10 @@ function AppContent() {
   const [isLoading, setIsLoading] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [running, setRunning] = useState(false);
-  const [scoreThreshold, setScoreThreshold] = useState(85);
+  const [scoreThreshold, setScoreThreshold] = useState(() => {
+    const saved = localStorage.getItem('scoreThreshold');
+    return saved !== null ? Number(saved) : 85;
+  });
 
   const [showAddModal, setShowAddModal] = useState(false);
   const [addInput, setAddInput] = useState("");
@@ -93,6 +96,11 @@ function AppContent() {
       loadNextDay();
     }
   }, [inView, isLoading, hasMore, groups]);
+
+  // Persist threshold to localStorage
+  useEffect(() => {
+    localStorage.setItem('scoreThreshold', String(scoreThreshold));
+  }, [scoreThreshold]);
 
   // Initial load
   useEffect(() => {

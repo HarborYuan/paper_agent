@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { ArrowLeft, Calendar, Users, ExternalLink, Star, Building2, Tag, RefreshCw } from 'lucide-react';
 import { format } from 'date-fns';
+import ReactMarkdown from 'react-markdown';
 
 const API_URL = '';
 
@@ -206,9 +207,19 @@ const PaperDetail = () => {
                         </div>
                         <div className="prose prose-invert prose-slate max-w-none bg-slate-900/30 p-6 rounded-xl border border-slate-700/50">
                             {paper.summary_personalized ? (
-                                <p className="leading-relaxed text-lg text-slate-300">
+                                <ReactMarkdown
+                                    components={{
+                                        h2: ({ children }) => <h2 className="text-lg font-bold text-cyan-400 mt-5 mb-2 first:mt-0">{children}</h2>,
+                                        h3: ({ children }) => <h3 className="text-base font-bold text-slate-200 mt-4 mb-2">{children}</h3>,
+                                        p: ({ children }) => <p className="leading-relaxed text-slate-300 mb-3">{children}</p>,
+                                        ul: ({ children }) => <ul className="list-disc list-inside space-y-1 text-slate-300 mb-3">{children}</ul>,
+                                        li: ({ children }) => <li className="leading-relaxed">{children}</li>,
+                                        strong: ({ children }) => <strong className="text-slate-200 font-semibold">{children}</strong>,
+                                        code: ({ children }) => <code className="bg-slate-800 px-1.5 py-0.5 rounded text-cyan-300 text-sm">{children}</code>,
+                                    }}
+                                >
                                     {paper.summary_personalized}
-                                </p>
+                                </ReactMarkdown>
                             ) : (
                                 <p className="text-slate-500 italic">No personalized summary available.</p>
                             )}

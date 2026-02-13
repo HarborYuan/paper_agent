@@ -1,89 +1,121 @@
-# Paper Agent
+<p align="center">
+  <h1 align="center">📄 Paper Agent</h1>
+  <p align="center">
+    <em>Your personal AI-powered arXiv digest — fetch, score, summarize, and browse daily papers effortlessly.</em>
+  </p>
+  <p align="center">
+    <a href="https://github.com/HarborYuan/paper_agent/actions/workflows/docker-publish.yml"><img src="https://github.com/HarborYuan/paper_agent/actions/workflows/docker-publish.yml/badge.svg" alt="Docker Build"></a>
+    <img src="https://img.shields.io/badge/version-0.0.3-cyan" alt="Version">
+    <img src="https://img.shields.io/badge/python-3.13+-blue?logo=python&logoColor=white" alt="Python">
+    <img src="https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white" alt="FastAPI">
+    <img src="https://img.shields.io/badge/React-61DAFB?logo=react&logoColor=black" alt="React">
+  </p>
+</p>
 
-[![Docker Build and Publish](https://github.com/HarborYuan/paper_agent/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/HarborYuan/paper_agent/actions/workflows/docker-publish.yml)
+---
 
-A FastAPI-based agent to fetch, score, summarize, and notify you about new arXiv papers daily.
+## ✨ Features
 
-## Features
-- Fetches new papers from arXiv (De-duplicated)
-- Scores papers using LLM (GPT-4o-mini) based on your interests
-- Summarizes high-scoring papers
-- Pushes daily digest to Telegram or Pushover
-- **Web UI**: Day-by-day infinite scroll to browse papers by date
+| Feature | Description |
+|---------|-------------|
+| 🔍 **Auto-Fetch** | Pulls new papers from arXiv daily (de-duplicated) |
+| 🤖 **LLM Scoring** | Scores papers against your research interests using GPT-4o-mini |
+| 📝 **Smart Summaries** | Generates personalized markdown summaries with TL;DR, contributions, methodology |
+| 📬 **Notifications** | Pushes daily digest to Telegram or Pushover |
+| 🌐 **Web UI** | Beautiful dark-theme interface with day-by-day infinite scroll |
+| 🎚️ **Adjustable Threshold** | Filter papers by score with a live slider |
+| 🔄 **Per-Paper Refresh** | Re-summarize any paper on demand |
+| 🐳 **Docker Ready** | Single-container deployment with LinuxServer.io-style config |
 
-## Setup
+---
 
-1. **Install Dependencies**:
-   ```bash
-   uv sync
-   ```
 
-2. **Configuration**:
-   Copy `.env.example` (or create `.env`) and fill in:
-   ```bash
-   DATABASE_URL="sqlite:///./paper_agent.db"
-   OPENAI_API_KEY="sk-..."
-   
-   # Optional: Notifications
-   TELEGRAM_BOT_TOKEN="..."
-   TELEGRAM_CHAT_ID="..."
-   # OR
-   PUSHOVER_USER_KEY="..."
-   PUSHOVER_API_TOKEN="..."
-   ```
+## 📋 Version History
 
-## Usage
+| Version | Name | Highlights |
+|---------|------|------------|
+| **0.0.3** | *Beautify Update* | Markdown-rendered AI summaries, score threshold slider, per-paper refresh, README rewrite |
+| **0.0.2** | — | Docker deployment, auto-update scheduler, WebSocket log viewer |
+| **0.0.1** | — | Initial release: fetch, score, summarize, notify |
 
-1. **Start the API server**:
-   ```bash
-   uv run uvicorn src.main:app --reload
-   ```
+---
 
-2. **Start the Frontend**:
-   ```bash
-   cd frontend
-   npm install
-   npm run dev
-   ```
-   Open [http://localhost:5173](http://localhost:5173).
+## 🚀 Quick Start
 
-3. **Trigger a Run Manually**:
-   ```bash
-   curl -X POST http://localhost:8000/run
-   ```
-   Check the server logs to see the progress (Fetching -> Scoring -> Summarizing -> Notifying).
+### 1. Install Dependencies
 
-3. **View Papers via API**:
-   - Latest papers:
-     ```bash
-     curl http://localhost:8000/papers
-     ```
-   - Papers for a specific date:
-     ```bash
-     curl "http://localhost:8000/papers?date=2024-02-03"
-     ```
+```bash
+uv sync
+```
 
-## Docker Deployment (NAS / LinuxServer style)
+### 2. Configure
 
-This project supports a LinuxServer.io-style Docker deployment, running both the backend and frontend in a single container.
+Copy `.env.example` → `.env` and fill in your keys:
 
-1. **Build the image**:
-   ```bash
-   docker build -t paper-agent .
-   ```
+```env
+DATABASE_URL="sqlite:///./paper_agent.db"
+OPENAI_API_KEY="sk-..."
 
-2. **Run with Docker Compose**:
-   Ensure your `docker-compose.yml` is configured (update environment variables as needed):
-   ```bash
-   docker-compose up -d
-   ```
+# Optional: Notifications
+TELEGRAM_BOT_TOKEN="..."
+TELEGRAM_CHAT_ID="..."
+# OR
+PUSHOVER_USER_KEY="..."
+PUSHOVER_API_TOKEN="..."
+```
 
-3. **Environment Variables**:
-   - `PUID`/`PGID`: User/Group ID to run as (default 1000).
-   - `DATABASE_URL`: Path to sqlite db (e.g. `sqlite:////config/paper_agent.db`).
-   - `OPENAI_API_KEY`: Your OpenAI API key.
+### 3. Run
 
-4. **Access**:
-   - Web UI: http://localhost:8000
-   - API Docs: http://localhost:8000/docs
+```bash
+# Backend
+uv run uvicorn src.main:app --reload
+
+# Frontend (in another terminal)
+cd frontend && npm install && npm run dev
+```
+
+Open **[http://localhost:5173](http://localhost:5173)** to browse papers.
+
+### 4. Trigger a Fetch
+
+```bash
+curl -X POST http://localhost:8000/run
+```
+
+---
+
+## 🐳 Docker Deployment
+
+This project supports a **LinuxServer.io-style** single-container deployment.
+
+```bash
+# Build
+docker build -t paper-agent .
+
+# Run
+docker-compose up -d
+```
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `PUID` / `PGID` | User/Group ID | `1000` |
+| `DATABASE_URL` | SQLite path | `sqlite:////config/paper_agent.db` |
+| `OPENAI_API_KEY` | OpenAI API key | — |
+| `ENABLE_AUTO_UPDATE` | Daily auto-fetch | `false` |
+| `AUTO_UPDATE_TIME` | Fetch time (UTC) | `04:00` |
+
+**Access:** Web UI at `http://localhost:8000` · API docs at `http://localhost:8000/docs`
+
+---
+
+## 📖 API Reference
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/run` | Trigger fetch + score + summarize cycle |
+| `GET` | `/papers` | List papers (optional `?date=YYYY-MM-DD`) |
+| `GET` | `/papers/{id}` | Get single paper details |
+| `POST` | `/papers/add` | Add paper by arXiv ID or URL |
+| `POST` | `/papers/{id}/resummarize` | Re-summarize a paper with LLM |
+| `POST` | `/papers/re-score-date` | Re-score all papers for a date |
 
