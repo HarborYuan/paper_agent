@@ -299,4 +299,3 @@ if os.path.exists(frontend_dist):
             return FileResponse(file_path)
         # Otherwise, serve index.html for client-side routing
         return FileResponse(os.path.join(frontend_dist, "index.html"))
-
