@@ -115,19 +115,35 @@ async def run_worker():
         await logger.log(f"Notifying {len(papers_to_notify)} papers...")
         notifier = get_notifier()
         if notifier:
-            digest = f"*Daily Paper Digest ({len(papers_to_notify)} papers)*\n\n"
+            # Group papers by published date
+            from collections import defaultdict
+            by_date = defaultdict(list)
             for p in papers_to_notify:
-                digest += f"📄 *{p.title}* (Score: {p.score})\n"
-                digest += f"[PDF]({p.pdf_url})\n"
-                digest += f"tl;dr: {p.summary_personalized[:200]}...\n\n" # Truncate for preview
+                date_key = p.published_at.strftime("%Y-%m-%d")
+                by_date[date_key].append(p)
             
-            success = await notifier.send_message(digest)
+            # Sort dates (newest first), sort papers within each date by score desc
+            messages = []
+            for date_key in sorted(by_date.keys(), reverse=True):
+                date_papers = sorted(by_date[date_key], key=lambda x: x.score or 0, reverse=True)
+                digest = f"📅 {date_key}  ({len(date_papers)} papers)\n"
+                digest += "─" * 30 + "\n\n"
+                for i, p in enumerate(date_papers, 1):
+                    aff = f" | {p.main_affiliation}" if p.main_affiliation else ""
+                    digest += f"{i}. {p.title}\n"
+                    digest += f"   ⭐ Score: {p.score}{aff}\n"
+                    digest += f"   🔗 {p.pdf_url}\n"
+                    if p.summary_personalized:
+                        tldr = p.summary_personalized[:150].replace("\n", " ")
+                        digest += f"   💡 {tldr}...\n"
+                    digest += "\n"
+                messages.append(digest)
+            
+            success = await notifier.send_messages(messages)
             
             if success:
-                # Update status
                 with Session(engine) as session:
                     for p in papers_to_notify:
-                        # Re-fetch to attach to session
                         db_p = session.get(Paper, p.id)
                         db_p.status = "PUSHED"
                         session.add(db_p)

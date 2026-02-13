@@ -1,6 +1,6 @@
 import httpx
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import Optional, List
 from src.config import settings
 
 class Notifier(ABC):
@@ -8,52 +8,50 @@ class Notifier(ABC):
     async def send_message(self, message: str) -> bool:
         pass
 
-class TelegramNotifier(Notifier):
-    def __init__(self, bot_token: str, chat_id: str):
-        self.bot_token = bot_token
-        self.chat_id = chat_id
-        self.api_url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
+    async def send_messages(self, messages: List[str]) -> bool:
+        """Send multiple messages sequentially. Override for batch-aware implementations."""
+        all_ok = True
+        for msg in messages:
+            ok = await self.send_message(msg)
+            if not ok:
+                all_ok = False
+        return all_ok
+
+class LarkNotifier(Notifier):
+    MAX_PAPERS_PER_MESSAGE = 10  # Lark webhook has content size limits
+
+    def __init__(self, webhook_url: str):
+        self.webhook_url = webhook_url
 
     async def send_message(self, message: str) -> bool:
         async with httpx.AsyncClient() as client:
             try:
+                lines = message.strip().split("\n")
+                content_lines = []
+                for line in lines:
+                    if not line.strip():
+                        continue
+                    content_lines.append([{"tag": "text", "text": line + "\n"}])
+
                 payload = {
-                    "chat_id": self.chat_id,
-                    "text": message,
-                    "parse_mode": "Markdown"
+                    "msg_type": "post",
+                    "content": {
+                        "post": {
+                            "zh_cn": {
+                                "title": "📄 Paper Agent",
+                                "content": content_lines
+                            }
+                        }
+                    }
                 }
-                response = await client.post(self.api_url, json=payload)
+                response = await client.post(self.webhook_url, json=payload)
                 response.raise_for_status()
                 return True
             except Exception as e:
-                print(f"Telegram notification failed: {e}")
-                return False
-
-class PushoverNotifier(Notifier):
-    def __init__(self, user_key: str, api_token: str):
-        self.user_key = user_key
-        self.api_token = api_token
-        self.api_url = "https://api.pushover.net/1/messages.json"
-
-    async def send_message(self, message: str) -> bool:
-        async with httpx.AsyncClient() as client:
-            try:
-                payload = {
-                    "token": self.api_token,
-                    "user": self.user_key,
-                    "message": message,
-                    "html": 0 # Use 1 if we change to HTML, but markdown is generally better supported if formatted right, Pushover has limited markdown
-                }
-                response = await client.post(self.api_url, data=payload)
-                response.raise_for_status()
-                return True
-            except Exception as e:
-                print(f"Pushover notification failed: {e}")
+                print(f"Lark notification failed: {e}")
                 return False
 
 def get_notifier() -> Optional[Notifier]:
-    if settings.TELEGRAM_BOT_TOKEN and settings.TELEGRAM_CHAT_ID:
-        return TelegramNotifier(settings.TELEGRAM_BOT_TOKEN, settings.TELEGRAM_CHAT_ID)
-    if settings.PUSHOVER_USER_KEY and settings.PUSHOVER_API_TOKEN:
-        return PushoverNotifier(settings.PUSHOVER_USER_KEY, settings.PUSHOVER_API_TOKEN)
+    if settings.LARK_WEBHOOK_URL:
+        return LarkNotifier(settings.LARK_WEBHOOK_URL)
     return None

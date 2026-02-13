@@ -6,11 +6,8 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str | None = None
     OPENAI_BASE_URL: str | None = "https://api.openai.com/v1"
     
-    # Notification
-    TELEGRAM_BOT_TOKEN: str | None = None
-    TELEGRAM_CHAT_ID: str | None = None
-    PUSHOVER_USER_KEY: str | None = None
-    PUSHOVER_API_TOKEN: str | None = None
+    # Notification (Lark / 飞书)
+    LARK_WEBHOOK_URL: str | None = None
     ARXIV_CATEGORIES: List[str] = ["cs.CV", "cs.CL", "cs.AI"]
     
     # Auto Update

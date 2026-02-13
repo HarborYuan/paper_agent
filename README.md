@@ -5,7 +5,7 @@
   </p>
   <p align="center">
     <a href="https://github.com/HarborYuan/paper_agent/actions/workflows/docker-publish.yml"><img src="https://github.com/HarborYuan/paper_agent/actions/workflows/docker-publish.yml/badge.svg" alt="Docker Build"></a>
-    <img src="https://img.shields.io/badge/version-0.0.3-cyan" alt="Version">
+    <img src="https://img.shields.io/badge/version-0.1.0-cyan" alt="Version">
     <img src="https://img.shields.io/badge/python-3.13+-blue?logo=python&logoColor=white" alt="Python">
     <img src="https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white" alt="FastAPI">
     <img src="https://img.shields.io/badge/React-61DAFB?logo=react&logoColor=black" alt="React">
@@ -21,7 +21,7 @@
 | 🔍 **Auto-Fetch** | Pulls new papers from arXiv daily (de-duplicated) |
 | 🤖 **LLM Scoring** | Scores papers against your research interests using GPT-4o-mini |
 | 📝 **Smart Summaries** | Generates personalized markdown summaries with TL;DR, contributions, methodology |
-| 📬 **Notifications** | Pushes daily digest to Telegram or Pushover |
+| 📬 **Notifications** | Pushes daily digest to Lark (飞书) via webhook |
 | 🌐 **Web UI** | Beautiful dark-theme interface with day-by-day infinite scroll |
 | 🎚️ **Adjustable Threshold** | Filter papers by score with a live slider |
 | 🔄 **Per-Paper Refresh** | Re-summarize any paper on demand |
@@ -34,6 +34,7 @@
 
 | Version | Name | Highlights |
 |---------|------|------------|
+| **0.1.0** | *Notification Update* | Replaced Telegram/Pushover with Lark (飞书) webhook, date-grouped digests |
 | **0.0.3** | *Beautify Update* | Markdown-rendered AI summaries, score threshold slider, per-paper refresh, README rewrite |
 | **0.0.2** | — | Docker deployment, auto-update scheduler, WebSocket log viewer |
 | **0.0.1** | — | Initial release: fetch, score, summarize, notify |
@@ -56,12 +57,8 @@ Copy `.env.example` → `.env` and fill in your keys:
 DATABASE_URL="sqlite:///./paper_agent.db"
 OPENAI_API_KEY="sk-..."
 
-# Optional: Notifications
-TELEGRAM_BOT_TOKEN="..."
-TELEGRAM_CHAT_ID="..."
-# OR
-PUSHOVER_USER_KEY="..."
-PUSHOVER_API_TOKEN="..."
+# Optional: Lark Notification
+LARK_WEBHOOK_URL="https://open.larksuite.com/open-apis/bot/v2/hook/..."
 ```
 
 ### 3. Run
