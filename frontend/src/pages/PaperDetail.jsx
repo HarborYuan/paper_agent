@@ -33,6 +33,16 @@ const PaperDetail = () => {
         }
     }, [id]);
 
+    // Set document title to arxiv ID
+    useEffect(() => {
+        if (id) {
+            document.title = `${id} - Paper Agent`;
+        }
+        return () => {
+            document.title = 'Paper Agent';
+        };
+    }, [id]);
+
     const handleRefresh = async () => {
         if (refreshing) return;
         setRefreshing(true);
@@ -116,7 +126,13 @@ const PaperDetail = () => {
         <div className="min-h-screen bg-[#0f172a] text-slate-200 p-6 md:p-12 font-sans selection:bg-cyan-500/30">
             <div className="max-w-4xl mx-auto">
                 <button
-                    onClick={() => navigate(-1)}
+                    onClick={() => {
+                        if (window.history.length > 1) {
+                            navigate(-1);
+                        } else {
+                            window.close();
+                        }
+                    }}
                     className="flex items-center gap-2 text-slate-400 hover:text-white transition-colors mb-8 group"
                 >
                     <ArrowLeft size={20} className="group-hover:-translate-x-1 transition-transform" />

@@ -280,21 +280,23 @@ def read_root():
 # This mimics the behavior of nginx serving the frontend
 import os
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 
 frontend_dist = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend", "dist")
 if os.path.exists(frontend_dist):
-    # Mount assets first to ensure they are served correctly
-    # (Vite builds usually put assets in /assets)
-    # But mounting root with html=True handles index.html and traversing
-    
-    # However, for SPA client-side routing to work (e.g. /papers/123), 
-    # we might need a catch-all route if StaticFiles doesn't find the file.
-    # For now, let's keep it simple: mount / to dist.
-    # Note: This obscures the `read_root` above if we are not careful, 
-    # but FastAPI checks routes in order. `read_root` is defined BEFORE `app.mount`.
-    # Wait, `app.mount("/", ...)` matches everything. 
-    # If `read_root` is defined @app.get("/"), does it take precedence?
-    # Yes, path operations declared before valid mounts usually work.
-    # But `mount` at `/` is a catch-all.
-    
-    app.mount("/", StaticFiles(directory=frontend_dist, html=True), name="static")
+    # Mount /assets separately so Vite-built JS/CSS/images are served directly
+    assets_dir = os.path.join(frontend_dist, "assets")
+    if os.path.exists(assets_dir):
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+
+    # SPA catch-all: any route not matched by the API or /assets
+    # serves the frontend index.html so client-side routing works on refresh
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str):
+        # If the requested file exists on disk, serve it (e.g. favicon, manifest)
+        file_path = os.path.join(frontend_dist, full_path)
+        if full_path and os.path.isfile(file_path):
+            return FileResponse(file_path)
+        # Otherwise, serve index.html for client-side routing
+        return FileResponse(os.path.join(frontend_dist, "index.html"))
+

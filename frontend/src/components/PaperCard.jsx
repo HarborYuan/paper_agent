@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import { FileText, Calendar, Users, Tag, ExternalLink, Star, Building2, RefreshCw } from 'lucide-react';
 import { format } from 'date-fns';
-import { useNavigate } from 'react-router-dom';
+
 import axios from 'axios';
 
 // Import Logos
@@ -40,7 +40,7 @@ const MATCH_KEYS = Object.keys(LOGO_MAP)
     }));
 
 const PaperCard = ({ paper, onRefreshed }) => {
-    const navigate = useNavigate();
+
     const [refreshing, setRefreshing] = useState(false);
     const {
         title,
@@ -152,7 +152,7 @@ const PaperCard = ({ paper, onRefreshed }) => {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95 }}
             whileHover={{ y: -5, transition: { duration: 0.2 } }}
-            onClick={() => navigate(`/paper/${paper.id}`)}
+            onClick={() => window.open(`/paper/${paper.id}`, '_blank')}
             className="bg-slate-800/50 backdrop-blur-md border border-slate-700/50 rounded-xl p-5 shadow-lg hover:shadow-cyan-500/10 hover:border-cyan-500/30 transition-all duration-300 group overflow-hidden relative cursor-pointer"
         >
             {/* Glow Effect */}
