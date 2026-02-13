@@ -194,6 +194,38 @@ async def process_single_paper(paper_id: str, force_rescore: bool = False):
                     session.commit()
 
 
+async def resummarize_single_paper(paper_id: str):
+    """
+    Force re-summarize a single paper regardless of its current status.
+    Always re-runs scoring and summarization, skipping notification.
+    """
+    await logger.log(f"Force re-summarizing paper: {paper_id}")
+
+    with Session(engine) as session:
+        paper = session.get(Paper, paper_id)
+
+    if not paper:
+        await logger.log(f"Paper {paper_id} not found in DB.")
+        return
+
+    llm = LLMService()
+    sem = asyncio.Semaphore(1)
+
+    # 1. Re-score
+    await process_paper_score(sem, llm, paper)
+
+    # Reload after scoring
+    with Session(engine) as session:
+        paper = session.get(Paper, paper_id)
+    if not paper:
+        return
+
+    # 2. Always summarize (regardless of score)
+    await process_paper_summary(sem, llm, paper)
+
+    await logger.log(f"Finished re-summarizing paper: {paper_id}")
+
+
 if __name__ == "__main__":
     from src.database import init_db
     try:

@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import axios from 'axios';
-import { ArrowLeft, Calendar, Users, ExternalLink, Star, Building2, Tag } from 'lucide-react';
+import { ArrowLeft, Calendar, Users, ExternalLink, Star, Building2, Tag, RefreshCw } from 'lucide-react';
 import { format } from 'date-fns';
 
 const API_URL = '';
@@ -12,6 +12,7 @@ const PaperDetail = () => {
     const [paper, setPaper] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
+    const [refreshing, setRefreshing] = useState(false);
 
     useEffect(() => {
         const fetchPaper = async () => {
@@ -30,6 +31,34 @@ const PaperDetail = () => {
             fetchPaper();
         }
     }, [id]);
+
+    const handleRefresh = async () => {
+        if (refreshing) return;
+        setRefreshing(true);
+        try {
+            await axios.post(`${API_URL}/papers/${id}/resummarize`);
+            // Poll for completion (check every 3s, up to 120s)
+            let attempts = 0;
+            const poll = setInterval(async () => {
+                attempts++;
+                try {
+                    const res = await axios.get(`${API_URL}/papers/${id}`);
+                    if (res.data.summary_personalized !== paper?.summary_personalized || attempts >= 40) {
+                        clearInterval(poll);
+                        setPaper(res.data);
+                        setRefreshing(false);
+                    }
+                } catch {
+                    clearInterval(poll);
+                    setRefreshing(false);
+                }
+            }, 3000);
+        } catch (error) {
+            console.error('Failed to re-summarize', error);
+            alert(error.response?.data?.detail || 'Failed to trigger re-summarization');
+            setRefreshing(false);
+        }
+    };
 
     if (loading) {
         return (
@@ -158,9 +187,23 @@ const PaperDetail = () => {
 
                     {/* AI Summary */}
                     <div className="mb-10">
-                        <h3 className="text-xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-blue-400 mb-4 font-display">
-                            AI Analysis
-                        </h3>
+                        <div className="flex items-center justify-between gap-4 mb-4">
+                            <h3 className="text-xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-blue-400 font-display">
+                                AI Analysis
+                            </h3>
+                            <button
+                                onClick={handleRefresh}
+                                disabled={refreshing}
+                                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-bold transition-all ${refreshing
+                                    ? 'bg-slate-700 text-slate-500 cursor-wait'
+                                    : 'bg-slate-700/50 text-cyan-400 hover:bg-slate-600 border border-slate-600/50'
+                                    }`}
+                                title={paper.summary_personalized ? 'Re-summarize with LLM' : 'Summarize with LLM'}
+                            >
+                                <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
+                                {refreshing ? 'Summarizing...' : (paper.summary_personalized ? 'Re-summarize' : 'Summarize')}
+                            </button>
+                        </div>
                         <div className="prose prose-invert prose-slate max-w-none bg-slate-900/30 p-6 rounded-xl border border-slate-700/50">
                             {paper.summary_personalized ? (
                                 <p className="leading-relaxed text-lg text-slate-300">

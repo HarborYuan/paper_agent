@@ -1,8 +1,9 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { motion } from 'framer-motion';
-import { FileText, Calendar, Users, Tag, ExternalLink, Star, Building2 } from 'lucide-react';
+import { FileText, Calendar, Users, Tag, ExternalLink, Star, Building2, RefreshCw } from 'lucide-react';
 import { format } from 'date-fns';
 import { useNavigate } from 'react-router-dom';
+import axios from 'axios';
 
 // Import Logos
 import bytedanceLogo from '../assets/logos/bytedance.svg';
@@ -38,8 +39,9 @@ const MATCH_KEYS = Object.keys(LOGO_MAP)
         original: key
     }));
 
-const PaperCard = ({ paper }) => {
+const PaperCard = ({ paper, onRefreshed }) => {
     const navigate = useNavigate();
+    const [refreshing, setRefreshing] = useState(false);
     const {
         title,
         authors, // Changed from authors_list
@@ -112,6 +114,37 @@ const PaperCard = ({ paper }) => {
         }
     }
 
+    const handleRefresh = async (e) => {
+        e.stopPropagation();
+        if (refreshing) return;
+        setRefreshing(true);
+        try {
+            await axios.post(`/papers/${paper.id}/resummarize`);
+            // Poll for completion (check every 3s, up to 120s)
+            let attempts = 0;
+            const poll = setInterval(async () => {
+                attempts++;
+                try {
+                    const res = await axios.get(`/papers/${paper.id}`);
+                    if (res.data.summary_personalized !== paper.summary_personalized || attempts >= 40) {
+                        clearInterval(poll);
+                        setRefreshing(false);
+                        if (onRefreshed) onRefreshed(paper.id);
+                        // Force reload the page to show updated data
+                        window.location.reload();
+                    }
+                } catch {
+                    clearInterval(poll);
+                    setRefreshing(false);
+                }
+            }, 3000);
+        } catch (error) {
+            console.error('Failed to re-summarize', error);
+            alert(error.response?.data?.detail || 'Failed to trigger re-summarization');
+            setRefreshing(false);
+        }
+    };
+
     return (
         <motion.div
             layout
@@ -137,6 +170,14 @@ const PaperCard = ({ paper }) => {
                             {score}
                         </div>
                     )}
+                    <button
+                        onClick={handleRefresh}
+                        disabled={refreshing}
+                        className="shrink-0 p-1 rounded-full text-slate-500 hover:text-cyan-400 hover:bg-slate-700/50 transition-all disabled:cursor-wait"
+                        title={summary_personalized ? 'Re-summarize with LLM' : 'Summarize with LLM'}
+                    >
+                        <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
+                    </button>
                 </div>
 
                 {/* Meta */}

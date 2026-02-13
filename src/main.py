@@ -8,7 +8,7 @@ import re
 
 from src.database import init_db, get_session, engine
 from src.models import Paper
-from src.worker import run_worker, process_single_paper
+from src.worker import run_worker, process_single_paper, resummarize_single_paper
 from src.services.arxiv import ArxivFetcher
 from src.logger import logger
 from src.scheduler import SchedulerService
@@ -198,8 +198,35 @@ def get_paper(paper_id: str, session: Session = Depends(get_session)):
         raise HTTPException(status_code=404, detail="Paper not found")
     return paper
 
-# In-memory store for rate limiting: date_str -> last_run_timestamp
-RESCORE_LAST_RUN = {}
+# In-memory store for rate limiting
+RESCORE_LAST_RUN = {}  # date_str -> last_run_timestamp
+RESUMMARIZE_LAST_RUN = {}  # paper_id -> last_run_timestamp
+
+@app.post("/papers/{paper_id}/resummarize")
+async def resummarize_paper(paper_id: str, background_tasks: BackgroundTasks, session: Session = Depends(get_session)):
+    """
+    Trigger re-summarization for a single paper.
+    Rate limited to once per 30 seconds per paper.
+    """
+    # Rate Limiting
+    now = datetime.now()
+    last_run = RESUMMARIZE_LAST_RUN.get(paper_id)
+    if last_run:
+        elapsed = (now - last_run).total_seconds()
+        if elapsed < 30:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Please wait {int(30 - elapsed)} seconds before re-summarizing this paper again."
+            )
+
+    paper = session.get(Paper, paper_id)
+    if not paper:
+        raise HTTPException(status_code=404, detail="Paper not found")
+
+    RESUMMARIZE_LAST_RUN[paper_id] = now
+    background_tasks.add_task(resummarize_single_paper, paper_id)
+    return {"message": f"Re-summarization started for paper {paper_id}"}
+
 
 @app.post("/papers/re-score-date")
 async def rescore_date(date: str, background_tasks: BackgroundTasks, session: Session = Depends(get_session)):

@@ -73,7 +73,7 @@ function AppContent() {
   const [isLoading, setIsLoading] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [running, setRunning] = useState(false);
-  const [showLowScore, setShowLowScore] = useState(false);
+  const [scoreThreshold, setScoreThreshold] = useState(85);
 
   const [showAddModal, setShowAddModal] = useState(false);
   const [addInput, setAddInput] = useState("");
@@ -252,9 +252,17 @@ function AppContent() {
   // Filter papers for display
   const getFilteredGroupPapers = (groupPapers) => {
     return groupPapers.filter(paper => {
-      if (showLowScore) return true;
-      return (paper.score || 0) >= 85;
+      return (paper.score || 0) >= scoreThreshold;
     });
+  };
+
+  // Refresh a single paper's data in the local state
+  const handlePaperRefreshed = (paperId) => {
+    // Re-fetch the group containing this paper
+    setGroups(prevGroups => prevGroups.map(group => ({
+      ...group,
+      papers: group.papers.map(p => p.id === paperId ? { ...p, _refreshing: false } : p)
+    })));
   };
 
 
@@ -295,17 +303,18 @@ function AppContent() {
             <Terminal size={18} />
           </button>
 
-          {/* Toggle */}
-          <div className="flex items-center gap-2">
-            <span className={`text-sm font-medium ${showLowScore ? 'text-slate-200' : 'text-slate-500'}`}>Low Scores</span>
-            <button
-              onClick={() => setShowLowScore(!showLowScore)}
-              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${showLowScore ? 'bg-cyan-500' : 'bg-slate-700'}`}
-            >
-              <span
-                className={`${showLowScore ? 'translate-x-6' : 'translate-x-1'} inline-block h-4 w-4 transform rounded-full bg-white transition-transform`}
-              />
-            </button>
+          {/* Threshold Slider */}
+          <div className="flex items-center gap-3">
+            <span className="text-sm font-medium text-slate-400">Score ≥</span>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              value={scoreThreshold}
+              onChange={(e) => setScoreThreshold(Number(e.target.value))}
+              className="w-24 h-1.5 bg-slate-700 rounded-full appearance-none cursor-pointer accent-cyan-500"
+            />
+            <span className="text-sm font-bold text-cyan-400 w-8 text-center tabular-nums">{scoreThreshold}</span>
           </div>
 
           <button
@@ -402,7 +411,7 @@ function AppContent() {
                 columnClassName="pl-6 bg-clip-padding space-y-6"
               >
                 {visiblePapers.map(paper => (
-                  <PaperCard key={paper.id} paper={paper} />
+                  <PaperCard key={paper.id} paper={paper} onRefreshed={handlePaperRefreshed} />
                 ))}
               </Masonry>
             </section>
