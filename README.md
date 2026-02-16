@@ -25,8 +25,8 @@
 | 🌐 **Web UI** | Beautiful dark-theme interface with day-by-day infinite scroll |
 | 🎚️ **Adjustable Threshold** | Filter papers by score with a live slider |
 | 🔄 **Per-Paper Refresh** | Re-summarize any paper on demand |
-| � **Author Rankings** | Browse top authors ranked by paper count with time-range filtering |
-| �🐳 **Docker Ready** | Single-container deployment with LinuxServer.io-style config |
+| 🏆 **Author Rankings** | Browse top authors ranked by paper count with time-range filtering |
+| 🐳 **Docker Ready** | Single-container deployment with LinuxServer.io-style config |
 
 ---
 
