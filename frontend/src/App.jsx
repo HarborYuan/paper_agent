@@ -2,13 +2,15 @@ import React, { useEffect, useState, useRef } from 'react';
 import axios from 'axios';
 import { format, subDays, isToday, isYesterday } from 'date-fns';
 import Masonry from 'react-masonry-css';
-import { RefreshCw, Zap, Plus, X, Terminal } from 'lucide-react';
+import { RefreshCw, Zap, Plus, X, Terminal, Users } from 'lucide-react';
 import { useInView } from 'react-intersection-observer';
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
 
 import PaperCard from './components/PaperCard';
 import DateGroup from './components/DateGroup';
 import PaperDetail from './pages/PaperDetail';
+import Authors from './pages/Authors';
+import AuthorDetail from './pages/AuthorDetail';
 import LogViewer from './components/LogViewer';
 
 const API_URL = ''; // Relative path since we serve from the same origin in Docker/Production
@@ -341,61 +343,71 @@ function AppContent() {
             <Plus size={18} />
             Add Paper
           </button>
+
+          <Link
+            to="/authors"
+            className="flex items-center gap-2 px-4 py-2 rounded-lg font-bold bg-slate-800 text-slate-200 hover:bg-slate-700 transition-all border border-slate-700"
+          >
+            <Users size={18} />
+            Authors
+          </Link>
         </div>
       </header>
 
       {/* Add Paper Modal */}
-      {showAddModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-          <div className="bg-slate-800 rounded-2xl p-6 w-full max-w-md shadow-2xl border border-slate-700">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-xl font-bold text-white">Add Paper</h3>
-              <button
-                onClick={() => setShowAddModal(false)}
-                className="text-slate-400 hover:text-white"
-              >
-                <X size={24} />
-              </button>
-            </div>
-
-            <form onSubmit={handleAddPaper}>
-              <div className="mb-4">
-                <label className="block text-slate-400 text-sm font-bold mb-2">
-                  arXiv ID or URL
-                </label>
-                <input
-                  type="text"
-                  value={addInput}
-                  onChange={(e) => setAddInput(e.target.value)}
-                  placeholder="e.g. 1512.03385 or https://arxiv.org/abs/1512.03385"
-                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-cyan-500 transition-colors"
-                  autoFocus
-                />
-                <p className="text-xs text-slate-500 mt-2">
-                  Supports abstract URLs and PDF URLs.
-                </p>
-              </div>
-
-              <div className="flex justify-end gap-3">
+      {
+        showAddModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+            <div className="bg-slate-800 rounded-2xl p-6 w-full max-w-md shadow-2xl border border-slate-700">
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-xl font-bold text-white">Add Paper</h3>
                 <button
-                  type="button"
                   onClick={() => setShowAddModal(false)}
-                  className="px-4 py-2 rounded-lg font-medium text-slate-300 hover:bg-slate-700 transition-colors"
+                  className="text-slate-400 hover:text-white"
                 >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={addingPaper || !addInput.trim()}
-                  className={`px-4 py-2 rounded-lg font-bold text-slate-900 transition-colors ${addingPaper || !addInput.trim() ? 'bg-slate-600 cursor-not-allowed' : 'bg-cyan-500 hover:bg-cyan-400'}`}
-                >
-                  {addingPaper ? 'Adding...' : 'Add Paper'}
+                  <X size={24} />
                 </button>
               </div>
-            </form>
+
+              <form onSubmit={handleAddPaper}>
+                <div className="mb-4">
+                  <label className="block text-slate-400 text-sm font-bold mb-2">
+                    arXiv ID or URL
+                  </label>
+                  <input
+                    type="text"
+                    value={addInput}
+                    onChange={(e) => setAddInput(e.target.value)}
+                    placeholder="e.g. 1512.03385 or https://arxiv.org/abs/1512.03385"
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-cyan-500 transition-colors"
+                    autoFocus
+                  />
+                  <p className="text-xs text-slate-500 mt-2">
+                    Supports abstract URLs and PDF URLs.
+                  </p>
+                </div>
+
+                <div className="flex justify-end gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setShowAddModal(false)}
+                    className="px-4 py-2 rounded-lg font-medium text-slate-300 hover:bg-slate-700 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={addingPaper || !addInput.trim()}
+                    className={`px-4 py-2 rounded-lg font-bold text-slate-900 transition-colors ${addingPaper || !addInput.trim() ? 'bg-slate-600 cursor-not-allowed' : 'bg-cyan-500 hover:bg-cyan-400'}`}
+                  >
+                    {addingPaper ? 'Adding...' : 'Add Paper'}
+                  </button>
+                </div>
+              </form>
+            </div>
           </div>
-        </div>
-      )}
+        )
+      }
 
       {/* Content */}
       <main className="max-w-7xl mx-auto space-y-8 pb-20">
@@ -451,6 +463,8 @@ function App() {
       <Routes>
         <Route path="/" element={<AppContent />} />
         <Route path="/paper/:id" element={<PaperDetail />} />
+        <Route path="/authors" element={<Authors />} />
+        <Route path="/author/:name" element={<AuthorDetail />} />
       </Routes>
     </BrowserRouter>
   );

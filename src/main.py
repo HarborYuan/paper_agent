@@ -1,8 +1,10 @@
 from fastapi import FastAPI, BackgroundTasks, HTTPException, Depends, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import Session, select, SQLModel
-from typing import List, Optional
+from typing import List, Optional, Dict
 from datetime import datetime
+import json
+from collections import Counter
 from contextlib import asynccontextmanager
 import re
 
@@ -271,6 +273,48 @@ async def rescore_date(date: str, background_tasks: BackgroundTasks, session: Se
         
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+
+@app.get("/authors")
+def list_authors(session: Session = Depends(get_session)):
+    """
+    Get a ranked list of authors by paper count.
+    """
+    # Fetch all papers to aggregate authors in Python (simple for prototype)
+    papers = session.exec(select(Paper)).all()
+    author_counts = Counter()
+    
+    for paper in papers:
+        for author in paper.authors_list:
+            author_counts[author] += 1
+            
+    # Convert to list of dicts and sort
+    ranked_authors = [
+        {"name": name, "count": count} 
+        for name, count in author_counts.most_common()
+    ]
+    return ranked_authors
+
+@app.get("/authors/{author_name}/papers", response_model=List[Paper])
+def list_papers_by_author(author_name: str, session: Session = Depends(get_session)):
+    """
+    Get all papers for a specific author.
+    """
+    # In SQLite with JSON string, it's easier to filter in Python or use LIKE if format is predictable
+    # but for robustness we fetch and filter.
+    # Optimization: use LIKE '%"Author Name"%' as a pre-filter
+    search_term = f'"{author_name}"'
+    query = select(Paper).where(Paper.authors.contains(search_term))
+    papers = session.exec(query).all()
+    
+    # Refine filter to ensure exact match (not a substring of another author)
+    filtered_papers = [
+        p for p in papers if author_name in p.authors_list
+    ]
+    
+    # Sort by score desc, published_at desc
+    filtered_papers.sort(key=lambda x: (x.score or 0, x.published_at), reverse=True)
+    
+    return filtered_papers
 
 @app.get("/health")
 def read_root():
