@@ -17,7 +17,7 @@ const AuthorDetail = () => {
         const fetchPapers = async () => {
             setIsLoading(true);
             try {
-                const res = await axios.get(`${API_URL}/authors/${encodeURIComponent(name)}/papers`);
+                const res = await axios.get(`${API_URL}/api/authors/${encodeURIComponent(name)}/papers`);
                 setPapers(res.data);
             } catch (error) {
                 console.error("Failed to fetch papers for author", error);

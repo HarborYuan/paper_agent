@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import Optional, List
 from sqlmodel import SQLModel, Field
 import json
+import re
 
 class Paper(SQLModel, table=True):
     id: str = Field(primary_key=True)  # arXiv ID
@@ -31,4 +32,12 @@ class Paper(SQLModel, table=True):
 
     @property
     def authors_list(self) -> List[str]:
-        return json.loads(self.authors) if self.authors else []
+        if not self.authors:
+            return []
+        try:
+            return json.loads(self.authors)
+        except json.JSONDecodeError:
+            # Fallback for malformed JSON (e.g. unescaped quotes in names like O"Regan")
+            # Split by '", "' delimiter and strip surrounding brackets/quotes
+            parts = self.authors.strip('[]').split('", "')
+            return [p.strip('"') for p in parts if p.strip('"')]

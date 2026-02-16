@@ -1,4 +1,5 @@
 import asyncio
+import pytest
 from src.services.llm import LLMService, AffiliationResponse
 from src.services.pdf_service import pdf_service
 from src.models import Paper
@@ -28,7 +29,7 @@ PAPERS = [
     }
 ]
 
-async def test_affiliation_extraction():
+async def _run_affiliation_extraction():
     llm = LLMService()
     
     print("Starting Affiliation Extraction Test...")
@@ -69,5 +70,10 @@ async def test_affiliation_extraction():
         else:
             print("FAILED to extract affiliations.")
 
+@pytest.mark.skip(reason="Integration test: requires network access and OpenAI API key. Run manually via __main__.")
+def test_affiliation_extraction():
+    asyncio.run(_run_affiliation_extraction())
+
 if __name__ == "__main__":
-    asyncio.run(test_affiliation_extraction())
+    asyncio.run(_run_affiliation_extraction())
+

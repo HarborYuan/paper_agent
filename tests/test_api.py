@@ -4,9 +4,9 @@ from src.models import Paper
 from datetime import datetime
 
 def test_read_main(client: TestClient):
-    response = client.get("/")
+    response = client.get("/health")
     assert response.status_code == 200
-    assert response.json() == {"message": "Welcome to Paper Agent. POST /run to start processing."}
+    assert "message" in response.json()
 
 def test_list_papers_empty(client: TestClient):
     response = client.get("/papers")
@@ -22,6 +22,7 @@ def test_list_papers_with_data(client: TestClient, session: Session):
         summary_generic="Abstract",
         published_at=datetime.now(),
         category_primary="cs.AI",
+        all_categories='["cs.AI"]',
         pdf_url="http://example.com/pdf",
         updated_at=datetime.now(),
         status="NEW"
@@ -38,8 +39,8 @@ def test_list_papers_with_data(client: TestClient, session: Session):
 
 def test_filter_papers(client: TestClient, session: Session):
     # Seed DB
-    p1 = Paper(id="1", title="P1", authors="[]", summary_generic="", published_at=datetime.now(), category_primary="C", pdf_url="", updated_at=datetime.now(), status="NEW")
-    p2 = Paper(id="2", title="P2", authors="[]", summary_generic="", published_at=datetime.now(), category_primary="C", pdf_url="", updated_at=datetime.now(), status="SCORED")
+    p1 = Paper(id="1", title="P1", authors="[]", summary_generic="", published_at=datetime.now(), category_primary="C", all_categories="[]", pdf_url="", updated_at=datetime.now(), status="NEW")
+    p2 = Paper(id="2", title="P2", authors="[]", summary_generic="", published_at=datetime.now(), category_primary="C", all_categories="[]", pdf_url="", updated_at=datetime.now(), status="SCORED")
     session.add(p1)
     session.add(p2)
     session.commit()

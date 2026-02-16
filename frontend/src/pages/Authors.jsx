@@ -14,7 +14,7 @@ const Authors = () => {
     useEffect(() => {
         const fetchAuthors = async () => {
             try {
-                const res = await axios.get(`${API_URL}/authors`);
+                const res = await axios.get(`${API_URL}/api/authors`);
                 setAuthors(res.data);
             } catch (error) {
                 console.error("Failed to fetch authors", error);

@@ -1,4 +1,5 @@
 import feedparser
+import json
 import urllib.parse
 from datetime import datetime
 from typing import List
@@ -69,11 +70,11 @@ class ArxivFetcher:
             paper = Paper(
                 id=arxiv_id,
                 title=title,
-                authors=str(authors).replace("'", '"'), # Simple JSON dump
+                authors=json.dumps(authors),
                 summary_generic=abstract,   
                 published_at=published,
                 category_primary=primary_cat,
-                all_categories=str(categories).replace("'", '"'), # Simple JSON dump
+                all_categories=json.dumps(categories),
                 pdf_url=pdf_url,
                 updated_at=updated
             )
@@ -204,11 +205,11 @@ class ArxivFetcher:
         paper = Paper(
             id=paper_id,
             title=title,
-            authors=str(authors).replace("'", '"'),
+            authors=json.dumps(authors),
             summary_generic=abstract,   
             published_at=published,
             category_primary=primary_cat,
-            all_categories=str(categories).replace("'", '"'), # Full list from scraper
+            all_categories=json.dumps(categories),
             pdf_url=pdf_url,
             updated_at=datetime.now()
         )
