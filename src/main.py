@@ -2,7 +2,7 @@ from fastapi import FastAPI, BackgroundTasks, HTTPException, Depends, Query, Web
 from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import Session, select, SQLModel
 from typing import List, Optional, Dict
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 from collections import Counter
 from contextlib import asynccontextmanager
@@ -275,12 +275,16 @@ async def rescore_date(date: str, background_tasks: BackgroundTasks, session: Se
         raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
 
 @app.get("/authors")
-def list_authors(session: Session = Depends(get_session)):
+def list_authors(days: Optional[int] = Query(None, description="Filter papers published within the last N days"), session: Session = Depends(get_session)):
     """
     Get a ranked list of authors by paper count.
+    Optionally filter to papers published within the last N days.
     """
-    # Fetch all papers to aggregate authors in Python (simple for prototype)
-    papers = session.exec(select(Paper)).all()
+    query = select(Paper)
+    if days is not None:
+        cutoff = datetime.now() - timedelta(days=days)
+        query = query.where(Paper.published_at >= cutoff)
+    papers = session.exec(query).all()
     author_counts = Counter()
     
     for paper in papers:
@@ -295,15 +299,16 @@ def list_authors(session: Session = Depends(get_session)):
     return ranked_authors
 
 @app.get("/authors/{author_name}/papers", response_model=List[Paper])
-def list_papers_by_author(author_name: str, session: Session = Depends(get_session)):
+def list_papers_by_author(author_name: str, days: Optional[int] = Query(None, description="Filter papers published within the last N days"), session: Session = Depends(get_session)):
     """
     Get all papers for a specific author.
+    Optionally filter to papers published within the last N days.
     """
-    # In SQLite with JSON string, it's easier to filter in Python or use LIKE if format is predictable
-    # but for robustness we fetch and filter.
-    # Optimization: use LIKE '%"Author Name"%' as a pre-filter
     search_term = f'"{author_name}"'
     query = select(Paper).where(Paper.authors.contains(search_term))
+    if days is not None:
+        cutoff = datetime.now() - timedelta(days=days)
+        query = query.where(Paper.published_at >= cutoff)
     papers = session.exec(query).all()
     
     # Refine filter to ensure exact match (not a substring of another author)
