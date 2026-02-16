@@ -294,11 +294,10 @@ function AppContent() {
       {/* Header */}
       <header className="max-w-7xl mx-auto mb-12 flex justify-between items-end">
         <div>
-          <h1 className="text-4xl md:text-5xl font-black tracking-tight text-white mb-2 font-display">
-            <span className="text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-blue-500">Paper</span>
-            Agent
+          <h1 className="text-4xl md:text-5xl font-black text-white mb-2">
+            Paper <span className="text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-blue-500">Agent</span>
           </h1>
-          <p className="text-slate-400 font-medium">
+          <p className="text-slate-400 font-medium font-display">
             Daily arXiv digest tailored for you.
           </p>
         </div>
