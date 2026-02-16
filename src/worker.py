@@ -19,6 +19,12 @@ PAPER_SYNC_LIMIT = 500
 async def process_paper_score(sem: asyncio.Semaphore, llm: LLMService, paper: Paper):
     async with sem:
         await logger.log(f"Scoring paper: {paper.id}")
+
+        # Check for user score first
+        if paper.user_score is not None:
+             await logger.log(f"  - Skipping AI scoring for {paper.id}, user score present: {paper.user_score}")
+             return
+
         score_data = await llm.score_paper(paper, settings.USER_PROFILE)
         
         with Session(engine) as session:
@@ -228,7 +234,10 @@ async def resummarize_single_paper(paper_id: str):
     sem = asyncio.Semaphore(1)
 
     # 1. Re-score
-    await process_paper_score(sem, llm, paper)
+    if paper.user_score is None:
+        await process_paper_score(sem, llm, paper)
+    else:
+        await logger.log(f"  - Skipping re-scoring for {paper.id}, user score present: {paper.user_score}")
 
     # Reload after scoring
     with Session(engine) as session:

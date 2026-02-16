@@ -1,9 +1,13 @@
+import os
+
 from fastapi import FastAPI, BackgroundTasks, HTTPException, Depends, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+
 from sqlmodel import Session, select, SQLModel
-from typing import List, Optional, Dict
+from typing import List, Optional
 from datetime import datetime, timedelta
-import json
 from collections import Counter
 from contextlib import asynccontextmanager
 import re
@@ -14,6 +18,8 @@ from src.worker import run_worker, process_single_paper, resummarize_single_pape
 from src.services.arxiv import ArxivFetcher
 from src.logger import logger
 from src.scheduler import SchedulerService
+
+
 
 scheduler_service = SchedulerService()
 
@@ -230,6 +236,32 @@ async def resummarize_paper(paper_id: str, background_tasks: BackgroundTasks, se
     return {"message": f"Re-summarization started for paper {paper_id}"}
 
 
+@app.patch("/papers/{paper_id}/score")
+async def update_paper_score(paper_id: str, score: int, session: Session = Depends(get_session)):
+    """
+    Manually set a score for a paper.
+    This score takes precedence over AI scoring and prevents future AI re-scoring.
+    """
+    if score < 0 or score > 100:
+        raise HTTPException(status_code=400, detail="Score must be between 0 and 100")
+
+    paper = session.get(Paper, paper_id)
+    if not paper:
+        raise HTTPException(status_code=404, detail="Paper not found")
+
+    paper.user_score = score
+    paper.score = score # Update main score column for sorting/filtering
+    paper.score_reason = "User assigned score"
+    paper.status = "SCORED" # Ensure it shows up as scored
+    
+    session.add(paper)
+    session.commit()
+    session.refresh(paper)
+    
+    return paper
+
+
+
 @app.post("/papers/re-score-date")
 async def rescore_date(date: str, background_tasks: BackgroundTasks, session: Session = Depends(get_session)):
     """
@@ -321,16 +353,16 @@ def list_papers_by_author(author_name: str, days: Optional[int] = Query(None, de
     
     return filtered_papers
 
+
+
 @app.get("/health")
 def read_root():
     return {"message": "Welcome to Paper Agent. POST /run to start processing.", "docs": "/docs"}
 
+
+
 # Serve frontend static files if they exist (Docker/Deployment mode)
 # This mimics the behavior of nginx serving the frontend
-import os
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
-
 frontend_dist = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend", "dist")
 if os.path.exists(frontend_dist):
     # Mount /assets separately so Vite-built JS/CSS/images are served directly

@@ -2,7 +2,6 @@ from datetime import datetime
 from typing import Optional, List
 from sqlmodel import SQLModel, Field
 import json
-import re
 
 class Paper(SQLModel, table=True):
     id: str = Field(primary_key=True)  # arXiv ID
@@ -22,6 +21,7 @@ class Paper(SQLModel, table=True):
     main_affiliation: Optional[str] = None
     
     score: Optional[int] = None
+    user_score: Optional[int] = None # Manually set by user, takes precedence
     score_reason: Optional[str] = None # JSON with details
     summary_personalized: Optional[str] = None
     
@@ -41,3 +41,9 @@ class Paper(SQLModel, table=True):
             # Split by '", "' delimiter and strip surrounding brackets/quotes
             parts = self.authors.strip('[]').split('", "')
             return [p.strip('"') for p in parts if p.strip('"')]
+
+class SchemaVersion(SQLModel, table=True):
+    id: int = Field(primary_key=True, default=1)
+    version: int
+    updated_at: datetime = Field(default_factory=datetime.now)
+

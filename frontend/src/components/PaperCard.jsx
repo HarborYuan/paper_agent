@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
-import { FileText, Calendar, Users, Tag, ExternalLink, Star, Building2, RefreshCw } from 'lucide-react';
+import { FileText, Calendar, Users, Tag, ExternalLink, Star, Building2, RefreshCw, Check, X, Edit2 } from 'lucide-react';
 import { format } from 'date-fns';
 
 import axios from 'axios';
@@ -54,8 +54,42 @@ const PaperCard = ({ paper, onRefreshed }) => {
         pdf_url,
         category_primary,
         main_affiliation,
-        main_company
+        main_company,
+        user_score
     } = paper;
+
+    const [localScore, setLocalScore] = useState(paper.user_score ?? score);
+    const [isEditingScore, setIsEditingScore] = useState(false);
+    const [editScoreVal, setEditScoreVal] = useState(localScore || 0);
+
+    const handleScoreClick = (e) => {
+        e.stopPropagation();
+        setEditScoreVal(localScore || 0);
+        setIsEditingScore(true);
+    };
+
+    const handleSaveScore = async (e) => {
+        e.stopPropagation();
+        try {
+            const val = parseInt(editScoreVal);
+            if (isNaN(val) || val < 0 || val > 100) {
+                alert("Score must be 0-100");
+                return;
+            }
+            await axios.patch(`/papers/${paper.id}/score`, null, { params: { score: val } });
+            setLocalScore(val);
+            setIsEditingScore(false);
+            if (onRefreshed) onRefreshed(paper.id); // Potentially trigger parent update
+        } catch (error) {
+            console.error("Failed to update score", error);
+            alert("Failed to update score");
+        }
+    };
+
+    const handleCancelScore = (e) => {
+        e.stopPropagation();
+        setIsEditingScore(false);
+    };
 
     // Use personalized summary if available, else generic
     const summary = summary_personalized || summary_generic;
@@ -164,12 +198,45 @@ const PaperCard = ({ paper, onRefreshed }) => {
                     <h3 className="text-lg font-bold text-slate-100 leading-tight group-hover:text-cyan-400 transition-colors pr-8">
                         {title}
                     </h3>
-                    {score && (
-                        <div className={`shrink-0 flex items-center gap-1 px-2 py-0.5 rounded text-xs font-bold ${score >= 85 ? 'bg-green-500/20 text-green-400' : 'bg-yellow-500/20 text-yellow-400'}`}>
-                            <Star size={12} fill="currentColor" />
-                            {score}
-                        </div>
-                    )}
+                    {/* Score (Editable) */}
+                    <div className="shrink-0 flex items-center gap-1" onClick={e => e.stopPropagation()}>
+                        {isEditingScore ? (
+                            <div className="flex items-center gap-1 bg-slate-700 rounded px-1 py-0.5">
+                                <input
+                                    type="number"
+                                    min="0"
+                                    max="100"
+                                    value={editScoreVal}
+                                    onChange={(e) => setEditScoreVal(e.target.value)}
+                                    className="w-12 bg-slate-900 border border-slate-600 rounded text-xs px-1 text-center text-white focus:outline-none focus:border-cyan-500"
+                                    autoFocus
+                                    onClick={e => e.stopPropagation()}
+                                />
+                                <button onClick={handleSaveScore} className="p-0.5 text-green-400 hover:bg-slate-600 rounded"><Check size={12} /></button>
+                                <button onClick={handleCancelScore} className="p-0.5 text-red-400 hover:bg-slate-600 rounded"><X size={12} /></button>
+                            </div>
+                        ) : (
+                            localScore !== null ? (
+                                <div
+                                    onClick={handleScoreClick}
+                                    className={`group/score flex items-center gap-1 px-2 py-0.5 rounded text-xs font-bold cursor-pointer transition-colors ${localScore >= 85 ? 'bg-green-500/20 text-green-400 hover:bg-green-500/30' : 'bg-yellow-500/20 text-yellow-400 hover:bg-yellow-500/30'}`}
+                                    title="Click to edit score"
+                                >
+                                    <Star size={12} fill="currentColor" />
+                                    {localScore}
+                                    <Edit2 size={10} className="opacity-0 group-hover/score:opacity-100 transition-opacity ml-1" />
+                                </div>
+                            ) : (
+                                <div
+                                    onClick={handleScoreClick}
+                                    className="flex items-center gap-1 px-2 py-0.5 rounded text-xs font-bold cursor-pointer bg-slate-700 text-slate-400 hover:bg-slate-600 hover:text-white transition-colors"
+                                    title="Set score"
+                                >
+                                    <span className="text-[10px]">Set Score</span>
+                                </div>
+                            )
+                        )}
+                    </div>
                     <button
                         onClick={handleRefresh}
                         disabled={refreshing}

@@ -8,4 +8,10 @@ def get_session():
         yield session
 
 def init_db():
+    # Helper to check if DB needs migration
+    # Import models to register them with SQLModel.metadata
+    import src.models 
     SQLModel.metadata.create_all(engine)
+    # Run migrations; delay import to avoid circular import
+    from src.migrations import check_and_migrate
+    check_and_migrate()
