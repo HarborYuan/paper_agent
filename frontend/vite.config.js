@@ -11,10 +11,7 @@ export default defineConfig({
   ],
   server: {
     proxy: {
-      '/api/authors': {
-        target: 'http://localhost:8000',
-        rewrite: (path) => path.replace(/^\/api/, ''),
-      },
+      '/authors': 'http://localhost:8000',
       '/papers': 'http://localhost:8000',
       '/run': 'http://localhost:8000',
       '/health': 'http://localhost:8000',

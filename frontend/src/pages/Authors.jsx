@@ -26,7 +26,7 @@ const Authors = () => {
             setIsLoading(true);
             try {
                 const params = selectedDays !== null ? { days: selectedDays } : {};
-                const res = await axios.get(`${API_URL}/api/authors`, { params });
+                const res = await axios.get(`${API_URL}/authors`, { params });
                 setAuthors(res.data);
             } catch (error) {
                 console.error("Failed to fetch authors", error);
@@ -81,8 +81,8 @@ const Authors = () => {
                                 key={range.label}
                                 onClick={() => setSelectedDays(range.value)}
                                 className={`px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${selectedDays === range.value
-                                        ? 'bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow-lg shadow-cyan-500/20'
-                                        : 'text-slate-400 hover:text-slate-200 hover:bg-slate-700/50'
+                                    ? 'bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow-lg shadow-cyan-500/20'
+                                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-700/50'
                                     }`}
                             >
                                 {range.label}
