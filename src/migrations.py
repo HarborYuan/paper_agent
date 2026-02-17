@@ -109,10 +109,46 @@ def migration_002_clean_authors(session: Session):
     session.commit()
     logger.info(f"Migration 002: Updated {updated_count} papers.")
 
-# Valid migrations list
+def migration_003_create_author_table(session: Session):
+    """
+    Create Author table if not exists.
+    """
+    logger.info("Migration 003: Creating Author table...")
+    try:
+        # We can use SQLModel's create_all but since we want to be specific and 
+        # not rely on global engine.
+        # However, checking if table exists via SQL is safer for migration scripts.
+        result = session.exec(text("SELECT name FROM sqlite_master WHERE type='table' AND name='author'")).all()
+        
+        if not result:
+            logger.info("Migration 003: Table 'author' does not exist. Creating...")
+            # We can use the SQLModel metadata to create it, specific to this table?
+            # Or just raw SQL for simplicity in migration script.
+            session.exec(text("""
+                CREATE TABLE author (
+                    name VARCHAR NOT NULL, 
+                    bio VARCHAR, 
+                    website VARCHAR, 
+                    affiliation VARCHAR, 
+                    is_important BOOLEAN NOT NULL DEFAULT 0, 
+                    created_at DATETIME NOT NULL, 
+                    updated_at DATETIME NOT NULL, 
+                    PRIMARY KEY (name)
+                )
+            """))
+            session.commit()
+            logger.info("Migration 003: Created author table.")
+        else:
+            logger.info("Migration 003: Table 'author' already exists.")
+            
+    except Exception as e:
+        logger.error(f"Migration 003 Failed: {e}")
+        raise e
+
 MIGRATIONS = [
     migration_001_add_user_score,
     migration_002_clean_authors,
+    migration_003_create_author_table,
 ]
 
 def check_and_migrate(dev_commit: bool = False):

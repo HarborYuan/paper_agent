@@ -14,7 +14,8 @@ from contextlib import asynccontextmanager
 import re
 
 from src.database import init_db, get_session, engine
-from src.models import Paper
+from src.database import init_db, get_session, engine
+from src.models import Paper, Author
 from src.worker import run_worker, process_single_paper, resummarize_single_paper
 from src.services.arxiv import ArxivFetcher
 from src.logger import logger
@@ -330,6 +331,46 @@ def list_authors(days: Optional[int] = Query(None, description="Filter papers pu
         for name, count in author_counts.most_common()
     ]
     return ranked_authors
+
+class AuthorUpdate(SQLModel):
+    bio: Optional[str] = None
+    website: Optional[str] = None
+    affiliation: Optional[str] = None
+    is_important: Optional[bool] = None
+
+@app.patch("/authors/{author_name}")
+async def update_author(author_name: str, update_data: AuthorUpdate, session: Session = Depends(get_session)):
+    """
+    Update author metadata (bio, website, affiliation, is_important).
+    Creates the author if they don't exist.
+    """
+    author = session.get(Author, author_name)
+    if not author:
+        author = Author(name=author_name)
+    
+    if update_data.bio is not None:
+        author.bio = update_data.bio
+    if update_data.website is not None:
+        author.website = update_data.website
+    if update_data.affiliation is not None:
+        author.affiliation = update_data.affiliation
+    if update_data.is_important is not None:
+        author.is_important = update_data.is_important
+        
+    author.updated_at = datetime.now()
+    session.add(author)
+    session.commit()
+    session.refresh(author)
+    return author
+
+@app.get("/authors/{author_name}/details", response_model=Author)
+def get_author_details(author_name: str, session: Session = Depends(get_session)):
+    author = session.get(Author, author_name)
+    if not author:
+        # Return empty/default if not found, or 404? 
+        # Frontend expects data probably. Let's return default.
+        return Author(name=author_name)
+    return author
 
 @app.get("/authors/{author_name}/papers", response_model=List[Paper])
 def list_papers_by_author(author_name: str, days: Optional[int] = Query(None, description="Filter papers published within the last N days"), session: Session = Depends(get_session)):

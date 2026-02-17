@@ -4,7 +4,7 @@ import json
 from sqlmodel import Session, select
 from src.database import engine
 from src.config import settings
-from src.models import Paper
+from src.models import Paper, Author
 from src.services.arxiv import ArxivFetcher
 from src.services.llm import LLMService
 from src.services.notifier import get_notifier
@@ -26,6 +26,30 @@ async def process_paper_score(sem: asyncio.Semaphore, llm: LLMService, paper: Pa
              return
 
         score_data = await llm.score_paper(paper, settings.USER_PROFILE)
+        
+        # Check for important authors
+        is_important_author = False
+        try:
+            with Session(engine) as session:
+                # Get authors from paper
+                authors = paper.authors_list
+                if authors:
+                    # Check if any is marked important
+                    statement = select(Author).where(
+                        Author.name.in_(authors), 
+                        Author.is_important == True
+                    )
+                    important_authors = session.exec(statement).all()
+                    if important_authors:
+                        is_important_author = True
+                        await logger.log(f"  - Found important author(s): {[a.name for a in important_authors]}")
+        except Exception as e:
+            await logger.log(f"  - Error checking important authors: {e}")
+
+        if is_important_author and score_data.score < 90:
+            await logger.log(f"  - Boosting score from {score_data.score} to 90 due to important author.")
+            score_data.score = 90
+
         
         with Session(engine) as session:
             db_paper = session.get(Paper, paper.id)

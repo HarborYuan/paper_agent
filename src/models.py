@@ -42,8 +42,19 @@ class Paper(SQLModel, table=True):
             parts = self.authors.strip('[]').split('", "')
             return [p.strip('"') for p in parts if p.strip('"')]
 
+
 class SchemaVersion(SQLModel, table=True):
     id: int = Field(primary_key=True, default=1)
     version: int
     updated_at: datetime = Field(default_factory=datetime.now)
+
+class Author(SQLModel, table=True):
+    name: str = Field(primary_key=True)
+    bio: Optional[str] = None
+    website: Optional[str] = None
+    affiliation: Optional[str] = None
+    is_important: bool = Field(default=False)
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
+
 
