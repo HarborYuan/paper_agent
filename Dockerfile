@@ -39,7 +39,6 @@ COPY --from=frontend-builder /web/dist ./frontend/dist
 # but we are in a container.
 # Let's verify standard uv usage.
 ENV UV_PYTHON_INSTALL_DIR="/app/.uv_python"
-ENV UV_CACHE_DIR="/tmp/.uv_cache"
 RUN uv sync --frozen && \
     rm -rf /app/.uv_cache
 

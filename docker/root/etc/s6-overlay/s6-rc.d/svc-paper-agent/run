@@ -23,7 +23,7 @@ sed -i 's|sqlite:///data/paper_agent.db|sqlite:////config/paper_agent.db|g' /con
 # ln -sf /config/.env /app/.env
 
 export UV_PYTHON_INSTALL_DIR="/app/.uv_python"
-export UV_CACHE_DIR="/tmp/.uv_cache"
+export UV_NO_CACHE=1
 
 # exec ensures the process replaces the shell, handling signals correctly
 exec s6-setuidgid abc uv run uvicorn src.main:app --host 0.0.0.0 --port 8000
