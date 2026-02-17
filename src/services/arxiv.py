@@ -51,7 +51,12 @@ class ArxivFetcher:
             # Helper to safely get attributes
             title = entry.title.replace("\n", " ")
             abstract = entry.summary.replace("\n", " ")
-            authors = [author.name for author in entry.authors]
+            authors = []
+            for author in entry.authors:
+                # Clean author name: remove colons and surrounding whitespace
+                name = author.name.replace(":", "").strip()
+                if name:
+                    authors.append(name)
             published = datetime(*entry.published_parsed[:6])
             updated = datetime(*entry.updated_parsed[:6])
             

@@ -29,9 +29,83 @@ def migration_001_add_user_score(session: Session):
         print(f"Migration 001 Failed: {e}")
         raise e
 
+import json
+from src.models import Paper
+
 # Valid migrations list
 MIGRATIONS = [
     migration_001_add_user_score,
+]
+
+def migration_002_clean_authors(session: Session):
+    """
+    Clean up author names: remove colons and trim whitespace.
+    """
+    print("Migration 002: Cleaning author names...")
+    
+    # Select all papers
+    papers = session.exec(select(Paper)).all()
+    updated_count = 0
+    
+    for paper in papers:
+        try:
+            current_json = paper.authors
+            if not current_json:
+                continue
+            
+            authors = []
+            cleaned_authors = []
+            changed = False
+
+            try:
+                authors = json.loads(current_json)
+            except json.JSONDecodeError:
+                # Fallback for malformed JSON (e.g. unescaped quotes)
+                # This logic mimics Paper.authors_list property
+                print(f"Migration 002: Found malformed JSON for paper {paper.id}, applying fallback...")
+                print("The malformed JSON is: ", current_json)
+                parts = current_json.strip('[]').split('", "')
+                authors = [p.strip('"') for p in parts if p.strip('"')]
+                changed = True  # We will save it back as valid JSON
+                print("The parsed authors are: ", authors)
+            
+            for author_name in authors:
+                if not isinstance(author_name, str):
+                    cleaned_authors.append(author_name)
+                    continue
+
+                # Apply cleaning logic
+                cleaned_name = author_name.replace(":", "").strip()
+                
+                # Check if name was changed
+                if cleaned_name != author_name:
+                    changed = True
+                
+                # Filter out empty strings
+                if cleaned_name:
+                    cleaned_authors.append(cleaned_name)
+                elif author_name: # Was not empty but became empty -> changed/removed
+                    changed = True
+            
+            # Check length difference as well (items filtered out)
+            if len(authors) != len(cleaned_authors):
+                changed = True
+                
+            if changed:
+                paper.authors = json.dumps(cleaned_authors)
+                session.add(paper)
+                updated_count += 1
+                
+        except Exception as e:
+            print(f"Migration 002 Error processing paper {paper.id}: {e}")
+            
+    session.commit()
+    print(f"Migration 002: Updated {updated_count} papers.")
+
+# Valid migrations list
+MIGRATIONS = [
+    migration_001_add_user_score,
+    migration_002_clean_authors,
 ]
 
 def check_and_migrate():
