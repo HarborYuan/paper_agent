@@ -5,7 +5,7 @@
   </p>
   <p align="center">
     <a href="https://github.com/HarborYuan/paper_agent/actions/workflows/docker-publish.yml"><img src="https://github.com/HarborYuan/paper_agent/actions/workflows/docker-publish.yml/badge.svg" alt="Docker Build"></a>
-    <img src="https://img.shields.io/badge/version-0.2.0-cyan" alt="Version">
+    <img src="https://img.shields.io/badge/version-0.2.1-cyan" alt="Version">
     <img src="https://img.shields.io/badge/python-3.13+-blue?logo=python&logoColor=white" alt="Python">
     <img src="https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white" alt="FastAPI">
     <img src="https://img.shields.io/badge/React-61DAFB?logo=react&logoColor=black" alt="React">
@@ -26,6 +26,7 @@
 | 🎚️ **Adjustable Threshold** | Filter papers by score with a live slider |
 | 🔄 **Per-Paper Refresh** | Re-summarize any paper on demand |
 | 🏆 **Author Rankings** | Browse top authors ranked by paper count with time-range filtering |
+| 👤 **Author Detail** | Edit author bio/website/affiliation and mark implementation authors for score boosting |
 | 🐳 **Docker Ready** | Single-container deployment with LinuxServer.io-style config |
 
 ---
@@ -35,6 +36,7 @@
 
 | Version | Name | Highlights |
 |---------|------|------------|
+| **0.2.1** | *Author Detail Update* | Edit author details, claim important authors for score boost |
 | **0.2.0** | *Authors Update* | Author ranking pages with time-range filter (7d/30d/90d/180d/360d/All) |
 | **0.1.0** | *Notification Update* | Replaced Telegram/Pushover with Lark (飞书) webhook, date-grouped digests |
 | **0.0.3** | *Beautify Update* | Markdown-rendered AI summaries, score threshold slider, per-paper refresh, README rewrite |

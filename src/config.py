@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     
     # Auto Update
     ENABLE_AUTO_UPDATE: bool = False
+    DEV_COMMIT: bool = False
     AUTO_UPDATE_TIME: str = "04:00" # UTC
 
     USER_PROFILE: str = """
