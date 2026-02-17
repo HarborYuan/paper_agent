@@ -1,12 +1,19 @@
+import sys
+
 from sqlmodel import Session, select
 from sqlalchemy import text
 from src.database import engine
 from src.models import SchemaVersion
-from src.logger import logger
 import logging
 from datetime import datetime
 
-logger = logging.getLogger("migration")
+
+logger = logging.getLogger("DB Migration")
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+    logger.addHandler(handler)
 
 def migration_001_add_user_score(session: Session):
     """
