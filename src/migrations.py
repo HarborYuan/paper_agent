@@ -108,7 +108,7 @@ MIGRATIONS = [
     migration_002_clean_authors,
 ]
 
-def check_and_migrate():
+def check_and_migrate(dev_commit: bool = False):
     """
     Check current DB version and run missing migrations.
     """
@@ -133,6 +133,9 @@ def check_and_migrate():
             return
 
         current_version = version_record.version if version_record else 0
+        if dev_commit:
+            current_version = 0
+
         target_version = len(MIGRATIONS)
         
         logger.info(f"Current DB Version: {current_version}. Target Version: {target_version}.")

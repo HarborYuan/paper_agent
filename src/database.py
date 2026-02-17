@@ -7,6 +7,8 @@ def get_session():
     with Session(engine) as session:
         yield session
 
+DEV_COMMIT=True
+
 def init_db():
     # Helper to check if DB needs migration
     # Import models to register them with SQLModel.metadata
@@ -14,4 +16,4 @@ def init_db():
     SQLModel.metadata.create_all(engine)
     # Run migrations; delay import to avoid circular import
     from src.migrations import check_and_migrate
-    check_and_migrate()
+    check_and_migrate(dev_commit=DEV_COMMIT)
