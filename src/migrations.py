@@ -19,14 +19,14 @@ def migration_001_add_user_score(session: Session):
         columns = [row[1] for row in result]
         
         if "user_score" not in columns:
-            print("Migration 001: Adding user_score column...")
+            logger.info("Migration 001: Adding user_score column...")
             session.exec(text("ALTER TABLE paper ADD COLUMN user_score INTEGER"))
             session.commit()
         else:
-            print("Migration 001: user_score column already exists.")
+            logger.info("Migration 001: user_score column already exists.")
             
     except Exception as e:
-        print(f"Migration 001 Failed: {e}")
+        logger.error(f"Migration 001 Failed: {e}")
         raise e
 
 import json
@@ -41,7 +41,7 @@ def migration_002_clean_authors(session: Session):
     """
     Clean up author names: remove colons and trim whitespace.
     """
-    print("Migration 002: Cleaning author names...")
+    logger.info("Migration 002: Cleaning author names...")
     
     # Select all papers
     papers = session.exec(select(Paper)).all()
@@ -62,12 +62,12 @@ def migration_002_clean_authors(session: Session):
             except json.JSONDecodeError:
                 # Fallback for malformed JSON (e.g. unescaped quotes)
                 # This logic mimics Paper.authors_list property
-                print(f"Migration 002: Found malformed JSON for paper {paper.id}, applying fallback...")
-                print("The malformed JSON is: ", current_json)
+                logger.warning(f"Migration 002: Found malformed JSON for paper {paper.id}, applying fallback...")
+                logger.debug(f"The malformed JSON is: {current_json}")
                 parts = current_json.strip('[]').split('", "')
                 authors = [p.strip('"') for p in parts if p.strip('"')]
                 changed = True  # We will save it back as valid JSON
-                print("The parsed authors are: ", authors)
+                logger.debug(f"The parsed authors are: {authors}")
             
             for author_name in authors:
                 if not isinstance(author_name, str):
@@ -97,10 +97,10 @@ def migration_002_clean_authors(session: Session):
                 updated_count += 1
                 
         except Exception as e:
-            print(f"Migration 002 Error processing paper {paper.id}: {e}")
+            logger.error(f"Migration 002 Error processing paper {paper.id}: {e}")
             
     session.commit()
-    print(f"Migration 002: Updated {updated_count} papers.")
+    logger.info(f"Migration 002: Updated {updated_count} papers.")
 
 # Valid migrations list
 MIGRATIONS = [
@@ -112,7 +112,7 @@ def check_and_migrate():
     """
     Check current DB version and run missing migrations.
     """
-    print("Checking database migrations...")
+    logger.info("Checking database migrations...")
     
     # Ensure SchemaVersion table exists
     # This is safe because init_db calls create_all before this? 
@@ -129,19 +129,19 @@ def check_and_migrate():
         except Exception:
             # Table might not exist yet if init_db failed or wasn't called?
             # But init_db should be called first.
-            print("Error checking version. Is DB initialized?")
+            logger.error("Error checking version. Is DB initialized?")
             return
 
         current_version = version_record.version if version_record else 0
         target_version = len(MIGRATIONS)
         
-        print(f"Current DB Version: {current_version}. Target Version: {target_version}.")
+        logger.info(f"Current DB Version: {current_version}. Target Version: {target_version}.")
         
         if current_version < target_version:
             for i in range(current_version, target_version):
                 migration_func = MIGRATIONS[i]
                 version_idx = i + 1
-                print(f"Running migration {version_idx}...")
+                logger.info(f"Running migration {version_idx}...")
                 
                 try:
                     migration_func(session)
@@ -157,11 +157,11 @@ def check_and_migrate():
                     
                     session.commit()
                     session.refresh(version_record)
-                    print(f"Migration {version_idx} completed successfully.")
+                    logger.info(f"Migration {version_idx} completed successfully.")
                     
                 except Exception as e:
-                    print(f"Migration {version_idx} failed: {e}")
+                    logger.error(f"Migration {version_idx} failed: {e}")
                     # Stop if migration fails
                     break
         else:
-            print("Database is up to date.")
+            logger.info("Database is up to date.")

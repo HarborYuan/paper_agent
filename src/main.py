@@ -336,7 +336,7 @@ def list_papers_by_author(author_name: str, days: Optional[int] = Query(None, de
     Get all papers for a specific author.
     Optionally filter to papers published within the last N days.
     """
-    search_term = f'"{author_name}"'
+    search_term = json.dumps(author_name) # Foo"Bar name
     query = select(Paper).where(Paper.authors.contains(search_term))
     if days is not None:
         cutoff = datetime.now() - timedelta(days=days)
