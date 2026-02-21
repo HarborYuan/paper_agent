@@ -395,7 +395,10 @@ def list_papers_by_author(author_name: str, days: Optional[int] = Query(None, de
     
     return filtered_papers
 
-
+@app.get("/profile")
+def get_profile():
+    from src.config import settings
+    return {"profile": settings.USER_PROFILE}
 
 @app.get("/health")
 def read_root():
