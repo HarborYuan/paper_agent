@@ -8,7 +8,7 @@ class SchedulerService:
     def __init__(self):
         self.scheduler = AsyncIOScheduler()
         
-    def start(self):
+    async def start(self):
         if not settings.ENABLE_AUTO_UPDATE:
             return
 
@@ -30,12 +30,12 @@ class SchedulerService:
             )
             
             self.scheduler.start()
-            print(f"Scheduler started. Auto-update scheduled daily at {settings.AUTO_UPDATE_TIME} UTC.")
+            await logger.log(f"Scheduler started. Auto-update scheduled daily at {settings.AUTO_UPDATE_TIME} UTC.")
             
         except ValueError:
-            print(f"Invalid AUTO_UPDATE_TIME format: {settings.AUTO_UPDATE_TIME}. Scheduler not started.")
+            await logger.log(f"Invalid AUTO_UPDATE_TIME format: {settings.AUTO_UPDATE_TIME}. Scheduler not started.")
         except Exception as e:
-            print(f"Failed to start scheduler: {e}")
+            await logger.log(f"Failed to start scheduler: {e}")
 
     def shutdown(self):
         if self.scheduler.running:

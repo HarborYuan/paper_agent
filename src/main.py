@@ -30,9 +30,9 @@ async def lifespan(app: FastAPI):
     # Startup
     try:
         init_db()
-        scheduler_service.start()
+        await scheduler_service.start()
     except Exception as e:
-        print(f"DB/Scheduler Init Error: {e}")
+        await logger.log(f"DB/Scheduler Init Error: {e}")
     yield
     # Shutdown (if needed)
     scheduler_service.shutdown()
