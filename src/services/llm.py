@@ -58,7 +58,12 @@ class LLMService:
         if full_text:
             full_text = sanitize_text(full_text)
             
-        prompt = prompt_service.render_prompt("summarization.jinja2", paper=paper, full_text=full_text)
+        prompt = prompt_service.render_prompt(
+            "summarization.jinja2", 
+            paper=paper, 
+            full_text=full_text,
+            language=settings.SUMMARY_LANGUAGE
+        )
         
         try:
             response = await self.client.chat.completions.create(

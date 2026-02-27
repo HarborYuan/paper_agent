@@ -10,6 +10,9 @@ class Settings(BaseSettings):
     LARK_WEBHOOK_URL: str | None = None
     ARXIV_CATEGORIES: List[str] = ["cs.CV", "cs.CL", "cs.AI"]
     
+    # Language; CN / EN currently
+    SUMMARY_LANGUAGE: str = "EN"
+
     # Auto Update
     ENABLE_AUTO_UPDATE: bool = False
     DEV_COMMIT: bool = False
