@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import { FileText, Calendar, Users, Tag, ExternalLink, Star, Building2, RefreshCw, Check, X, Edit2 } from 'lucide-react';
 import { format } from 'date-fns';
+import { Link } from 'react-router-dom';
 
 import axios from 'axios';
 
@@ -274,7 +275,18 @@ const PaperCard = ({ paper, onRefreshed }) => {
                     <p className="line-clamp-2 text-xs leading-relaxed">
                         {displayAuthors.map((author, idx) => (
                             <span key={idx} className={author === '...' ? 'text-slate-500 mx-1' : ''}>
-                                {author}{idx < displayAuthors.length - 1 && author !== '...' ? ', ' : ''}
+                                {author !== '...' ? (
+                                    <Link
+                                        to={`/author/${encodeURIComponent(author)}`}
+                                        className="hover:text-cyan-400 hover:underline transition-colors"
+                                        onClick={(e) => e.stopPropagation()}
+                                    >
+                                        {author}
+                                    </Link>
+                                ) : (
+                                    author
+                                )}
+                                {idx < displayAuthors.length - 1 && author !== '...' ? ', ' : ''}
                             </span>
                         ))}
                     </p>

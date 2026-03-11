@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import axios from 'axios';
 import { ArrowLeft, Calendar, Users, ExternalLink, Star, Building2, Tag, RefreshCw } from 'lucide-react';
 import { format } from 'date-fns';
@@ -195,8 +195,14 @@ const PaperDetail = () => {
                         </h3>
                         <div className="flex flex-wrap gap-x-2 gap-y-1 text-slate-300">
                             {parsedAuthors.map((author, idx) => (
-                                <span key={idx} className="hover:text-cyan-400 transition-colors cursor-default">
-                                    {author}{idx < parsedAuthors.length - 1 ? ',' : ''}
+                                <span key={idx} className="flex items-center">
+                                    <Link 
+                                        to={`/author/${encodeURIComponent(author)}`}
+                                        className="hover:text-cyan-400 hover:underline transition-colors cursor-pointer"
+                                    >
+                                        {author}
+                                    </Link>
+                                    {idx < parsedAuthors.length - 1 ? ',' : ''}
                                 </span>
                             ))}
                         </div>
