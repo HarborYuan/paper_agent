@@ -237,10 +237,22 @@ const PaperDetail = () => {
                                         ul: ({ children }) => <ul className="list-disc list-inside space-y-1 text-slate-300 mb-3">{children}</ul>,
                                         li: ({ children }) => <li className="leading-relaxed">{children}</li>,
                                         strong: ({ children }) => <strong className="text-slate-200 font-semibold">{children}</strong>,
-                                        code: ({ children }) => <code className="bg-slate-800 px-1.5 py-0.5 rounded text-cyan-300 text-sm">{children}</code>,
+                                        code: ({ node, className, children, ...props }) => {
+                                            const match = /language-(\w+)/.exec(className || '');
+                                            return match ? (
+                                                <code className={className} {...props}>
+                                                    {children}
+                                                </code>
+                                            ) : (
+                                                <code className="bg-slate-800 px-1.5 py-0.5 rounded text-cyan-300 text-sm break-words" {...props}>
+                                                    {children}
+                                                </code>
+                                            );
+                                        },
+                                        pre: ({ children }) => <pre className="bg-slate-900/50 p-4 rounded-lg overflow-x-auto whitespace-pre-wrap break-words border border-slate-700/50 mb-4">{children}</pre>,
                                     }}
                                 >
-                                    {paper.summary_personalized}
+                                    {paper.summary_personalized.replace(/^```[a-zA-Z]*\n?/i, '').replace(/\n?```$/i, '').trim()}
                                 </ReactMarkdown>
                             ) : (
                                 <p className="text-slate-500 italic">No personalized summary available.</p>
