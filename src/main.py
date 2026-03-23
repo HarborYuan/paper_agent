@@ -14,7 +14,6 @@ from contextlib import asynccontextmanager
 import re
 
 from src.database import init_db, get_session, engine
-from src.database import init_db, get_session, engine
 from src.models import Paper, Author
 from src.worker import run_worker, process_single_paper, resummarize_single_paper
 from src.services.arxiv import ArxivFetcher
@@ -158,6 +157,16 @@ def list_papers(
         # If no date specified, apply limit (traditional view)
         query = query.limit(limit)
         
+    results = session.exec(query).all()
+    return results
+
+@app.get("/papers/search", response_model=List[Paper])
+def search_papers(
+    q: str = Query(..., description="Search by title"),
+    limit: int = 50,
+    session: Session = Depends(get_session)
+):
+    query = select(Paper).where(Paper.title.icontains(q)).order_by(Paper.score.desc(), Paper.published_at.desc()).limit(limit)
     results = session.exec(query).all()
     return results
 

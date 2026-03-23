@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import axios from 'axios';
 import { format, subDays, isToday, isYesterday } from 'date-fns';
 import Masonry from 'react-masonry-css';
-import { RefreshCw, Zap, Plus, X, Terminal, Users, Settings } from 'lucide-react';
+import { RefreshCw, Zap, Plus, X, Terminal, Users, Settings, Search } from 'lucide-react';
 import { useInView } from 'react-intersection-observer';
 import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
 
@@ -86,6 +86,32 @@ function AppContent() {
   const [addingPaper, setAddingPaper] = useState(false);
 
   const [startDate, setStartDate] = useState(null); // Earliest paper date
+
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState([]);
+  const [isSearching, setIsSearching] = useState(false);
+
+  // Debounced Search Effect
+  useEffect(() => {
+    const handler = setTimeout(async () => {
+      const q = searchQuery.trim();
+      if (!q) {
+        setSearchResults([]);
+        setIsSearching(false);
+        return;
+      }
+      setIsSearching(true);
+      try {
+        const res = await axios.get(`${API_URL}/papers/search`, { params: { q } });
+        setSearchResults(res.data);
+      } catch (err) {
+        console.error("Failed to search", err);
+      } finally {
+        setIsSearching(false);
+      }
+    }, 400);
+    return () => clearTimeout(handler);
+  }, [searchQuery]);
 
   // Intersection observer for infinite scroll
   const { ref: observerRef, inView } = useInView({
@@ -293,72 +319,86 @@ function AppContent() {
       <LogViewer isOpen={showLogs} onClose={() => setShowLogs(false)} logs={logs} onClear={() => setLogs([])} />
 
       {/* Header */}
-      <header className="max-w-7xl mx-auto mb-12 flex justify-between items-end">
-        <div>
-          <h1 className="text-4xl md:text-5xl font-black text-white mb-2">
-            Paper <span className="text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-blue-500">Agent</span>
-          </h1>
-          <p className="text-slate-400 font-medium font-display">
-            Daily arXiv digest tailored for you.
-          </p>
-        </div>
-
-        <div className="flex items-center gap-4">
-          {/* Logs Button */}
-          <button
-            onClick={() => setShowLogs(true)}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg font-bold bg-slate-800 text-cyan-400 hover:bg-slate-700 transition-all border border-slate-700"
-            title="View Logs"
-          >
-            <Terminal size={18} />
-          </button>
-
-          {/* Threshold Slider */}
-          <div className="flex items-center gap-3">
-            <span className="text-sm font-medium text-slate-400">Score ≥</span>
-            <input
-              type="range"
-              min={0}
-              max={100}
-              value={scoreThreshold}
-              onChange={(e) => setScoreThreshold(Number(e.target.value))}
-              className="w-24 h-1.5 bg-slate-700 rounded-full appearance-none cursor-pointer accent-cyan-500"
-            />
-            <span className="text-sm font-bold text-cyan-400 w-8 text-center tabular-nums">{scoreThreshold}</span>
+      <header className="max-w-7xl mx-auto mb-10">
+        <div className="flex justify-between items-end mb-6">
+          <div>
+            <h1 className="text-4xl md:text-5xl font-black text-white mb-2">
+              Paper <span className="text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-blue-500">Agent</span>
+            </h1>
+            <p className="text-slate-400 font-medium font-display">
+              Daily arXiv digest tailored for you.
+            </p>
           </div>
 
-          <button
-            onClick={triggerRun}
-            disabled={running}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold transition-all ${running ? 'bg-slate-700 text-slate-500 cursor-wait' : 'bg-cyan-500 text-slate-900 hover:bg-cyan-400 shadow-lg hover:shadow-cyan-500/25'}`}
-          >
-            <RefreshCw size={18} className={running ? 'animate-spin' : ''} />
-            {running ? 'Processing...' : 'Fetch New'}
-          </button>
+          <div className="flex items-center gap-4">
+            {/* Logs Button */}
+            <button
+              onClick={() => setShowLogs(true)}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg font-bold bg-slate-800 text-cyan-400 hover:bg-slate-700 transition-all border border-slate-700"
+              title="View Logs"
+            >
+              <Terminal size={18} />
+            </button>
 
-          <button
-            onClick={() => setShowAddModal(true)}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg font-bold bg-slate-700 text-slate-200 hover:bg-slate-600 transition-all"
-          >
-            <Plus size={18} />
-            Add Paper
-          </button>
+            {/* Threshold Slider */}
+            <div className="flex items-center gap-3">
+              <span className="text-sm font-medium text-slate-400">Score ≥</span>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                value={scoreThreshold}
+                onChange={(e) => setScoreThreshold(Number(e.target.value))}
+                className="w-24 h-1.5 bg-slate-700 rounded-full appearance-none cursor-pointer accent-cyan-500"
+              />
+              <span className="text-sm font-bold text-cyan-400 w-8 text-center tabular-nums">{scoreThreshold}</span>
+            </div>
 
-          <Link
-            to="/authors"
-            className="flex items-center gap-2 px-4 py-2 rounded-lg font-bold bg-slate-800 text-slate-200 hover:bg-slate-700 transition-all border border-slate-700"
-          >
-            <Users size={18} />
-            Authors
-          </Link>
+            <button
+              onClick={triggerRun}
+              disabled={running}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold transition-all ${running ? 'bg-slate-700 text-slate-500 cursor-wait' : 'bg-cyan-500 text-slate-900 hover:bg-cyan-400 shadow-lg hover:shadow-cyan-500/25'}`}
+            >
+              <RefreshCw size={18} className={running ? 'animate-spin' : ''} />
+              {running ? 'Processing...' : 'Fetch New'}
+            </button>
 
-          <Link
-            to="/settings"
-            className="flex items-center gap-2 px-4 py-2 rounded-lg font-bold bg-slate-800 text-slate-200 hover:bg-slate-700 transition-all border border-slate-700"
-          >
-            <Settings size={18} />
-            Settings
-          </Link>
+            <button
+              onClick={() => setShowAddModal(true)}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg font-bold bg-slate-700 text-slate-200 hover:bg-slate-600 transition-all"
+            >
+              <Plus size={18} />
+              Add Paper
+            </button>
+
+            <Link
+              to="/authors"
+              className="flex items-center gap-2 px-4 py-2 rounded-lg font-bold bg-slate-800 text-slate-200 hover:bg-slate-700 transition-all border border-slate-700"
+            >
+              <Users size={18} />
+              Authors
+            </Link>
+
+            <Link
+              to="/settings"
+              className="flex items-center gap-2 px-4 py-2 rounded-lg font-bold bg-slate-800 text-slate-200 hover:bg-slate-700 transition-all border border-slate-700"
+            >
+              <Settings size={18} />
+              Settings
+            </Link>
+          </div>
+        </div>
+
+        {/* Search Row */}
+        <div className="relative w-full">
+          <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" size={20} />
+          <input
+            type="text"
+            placeholder="Search titles..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full bg-slate-900 border border-slate-700 rounded-xl pl-12 pr-4 py-3 text-base text-white focus:outline-none focus:border-cyan-500 transition-all shadow-sm focus:ring-1 focus:ring-cyan-500"
+          />
         </div>
       </header>
 
@@ -419,46 +459,76 @@ function AppContent() {
 
       {/* Content */}
       <main className="max-w-7xl mx-auto space-y-8 pb-20">
-        {groups.map((group, index) => {
-          const visiblePapers = getFilteredGroupPapers(group.papers);
-          if (visiblePapers.length === 0) return null;
-
-          let label = format(group.date, 'MMMM d, yyyy');
-          if (isToday(group.date)) label = "Today";
-          if (isYesterday(group.date)) label = "Yesterday";
-
-          return (
-            <section key={group.date.toISOString()}>
-              <DateGroup
-                dateLabel={label}
-                onReRank={() => handleReScoreDate(group.date)}
-              />
+        {searchQuery.trim() !== "" ? (
+          <section>
+            <div className="mb-6 pb-2 border-b border-slate-800 flex items-center justify-between sticky top-0 bg-[#0f172a]/90 backdrop-blur-md z-10 pt-4">
+              <h2 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-cyan-400 to-blue-500">
+                {isSearching ? "Searching..." : `Search Results (${searchResults.length})`}
+              </h2>
+            </div>
+            {searchResults.length > 0 ? (
               <Masonry
                 breakpointCols={masonryBreakpoints}
                 className="flex -ml-6 w-auto"
                 columnClassName="pl-6 bg-clip-padding space-y-6"
               >
-                {visiblePapers.map(paper => (
+                {searchResults.map(paper => (
                   <PaperCard key={paper.id} paper={paper} onRefreshed={handlePaperRefreshed} />
                 ))}
               </Masonry>
-            </section>
-          );
-        })}
+            ) : (
+              !isSearching && (
+                <div className="text-center py-20 bg-slate-800/30 rounded-3xl border border-slate-700 border-dashed">
+                  <h3 className="text-xl font-bold text-slate-300">No results found</h3>
+                  <p className="text-slate-500">Try a different title</p>
+                </div>
+              )
+            )}
+          </section>
+        ) : (
+          <>
+            {groups.map((group, index) => {
+              const visiblePapers = getFilteredGroupPapers(group.papers);
+              if (visiblePapers.length === 0) return null;
 
-        {/* Loading / Sentinel */}
-        <div ref={observerRef} className="flex justify-center py-10 opacity-50">
-          {isLoading && <RefreshCw className="animate-spin" size={30} />}
-          {!isLoading && hasMore && groups.length > 0 && <span className="text-sm">Load more...</span>}
-        </div>
+              let label = format(group.date, 'MMMM d, yyyy');
+              if (isToday(group.date)) label = "Today";
+              if (isYesterday(group.date)) label = "Yesterday";
 
-        {/* Initial Empty State */}
-        {!isLoading && groups.length === 0 && (
-          <div className="text-center py-20 bg-slate-800/30 rounded-3xl border border-slate-700 border-dashed">
-            <Zap className="mx-auto mb-4 text-slate-600" size={48} />
-            <h3 className="text-xl font-bold text-slate-300">No papers found</h3>
-            <p className="text-slate-500">Trigger a fetch to get started.</p>
-          </div>
+              return (
+                <section key={group.date.toISOString()}>
+                  <DateGroup
+                    dateLabel={label}
+                    onReRank={() => handleReScoreDate(group.date)}
+                  />
+                  <Masonry
+                    breakpointCols={masonryBreakpoints}
+                    className="flex -ml-6 w-auto"
+                    columnClassName="pl-6 bg-clip-padding space-y-6"
+                  >
+                    {visiblePapers.map(paper => (
+                      <PaperCard key={paper.id} paper={paper} onRefreshed={handlePaperRefreshed} />
+                    ))}
+                  </Masonry>
+                </section>
+              );
+            })}
+
+            {/* Loading / Sentinel */}
+            <div ref={observerRef} className="flex justify-center py-10 opacity-50">
+              {isLoading && <RefreshCw className="animate-spin" size={30} />}
+              {!isLoading && hasMore && groups.length > 0 && <span className="text-sm">Load more...</span>}
+            </div>
+
+            {/* Initial Empty State */}
+            {!isLoading && groups.length === 0 && (
+              <div className="text-center py-20 bg-slate-800/30 rounded-3xl border border-slate-700 border-dashed">
+                <Zap className="mx-auto mb-4 text-slate-600" size={48} />
+                <h3 className="text-xl font-bold text-slate-300">No papers found</h3>
+                <p className="text-slate-500">Trigger a fetch to get started.</p>
+              </div>
+            )}
+          </>
         )}
       </main>
     </div>
