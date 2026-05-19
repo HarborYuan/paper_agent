@@ -72,8 +72,8 @@ async def process_paper_summary(sem: asyncio.Semaphore, llm: LLMService, paper: 
         full_text = None
         if paper.pdf_url:
             full_text = await pdf_service.extract_text_from_url(paper.pdf_url)
-        
-        affiliations = None
+
+        aff_data = None
         if full_text:
             await logger.log(f"  - Extracted full text for {paper.id}")
             # Extract affiliations
