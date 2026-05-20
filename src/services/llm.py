@@ -23,13 +23,16 @@ class AffiliationResponse(BaseModel):
     main_university: Optional[str]
     main_affiliation: Optional[str]
 
+SUMMARY_FULL_TEXT_CHAR_LIMIT = 300_000
+
+
 class LLMService:
     def __init__(self):
         self.client = AsyncOpenAI(
             api_key=settings.OPENAI_API_KEY,
             base_url=settings.OPENAI_BASE_URL
         )
-        self.model = "gpt-4o-mini" 
+        self.model = "gpt-4o-mini"
 
     async def score_paper(self, paper: Paper, user_profile: str) -> Optional[ScoreResponse]:
         """
@@ -57,10 +60,19 @@ class LLMService:
         """
         if full_text:
             full_text = sanitize_text(full_text)
-            
+
+        # Truncate to keep the prompt under the model's context window.
+        # The 128K-token cap on gpt-4o-mini was exceeded by long papers (e.g. ones with big appendices).
+        if full_text and len(full_text) > SUMMARY_FULL_TEXT_CHAR_LIMIT:
+            print(
+                f"  - Truncating full_text for {paper.id} from {len(full_text)} "
+                f"to {SUMMARY_FULL_TEXT_CHAR_LIMIT} chars to fit context window."
+            )
+            full_text = full_text[:SUMMARY_FULL_TEXT_CHAR_LIMIT]
+
         prompt = prompt_service.render_prompt(
-            "summarization.jinja2", 
-            paper=paper, 
+            "summarization.jinja2",
+            paper=paper,
             full_text=full_text,
             language=settings.SUMMARY_LANGUAGE
         )
