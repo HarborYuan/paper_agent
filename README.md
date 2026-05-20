@@ -5,7 +5,7 @@
   </p>
   <p align="center">
     <a href="https://github.com/HarborYuan/paper_agent/actions/workflows/docker-publish.yml"><img src="https://github.com/HarborYuan/paper_agent/actions/workflows/docker-publish.yml/badge.svg" alt="Docker Build"></a>
-    <img src="https://img.shields.io/badge/version-0.3.0-cyan" alt="Version">
+    <img src="https://img.shields.io/badge/version-0.3.1-cyan" alt="Version">
     <img src="https://img.shields.io/badge/python-3.13+-blue?logo=python&logoColor=white" alt="Python">
     <img src="https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white" alt="FastAPI">
     <img src="https://img.shields.io/badge/React-61DAFB?logo=react&logoColor=black" alt="React">
@@ -36,6 +36,7 @@
 
 | Version | Name | Highlights |
 |---------|------|------------|
+| **0.3.1** | *Notification Update* | Authors in digest, rest-day notification, daily scoring stats |
 | **0.3.0** | *Retrieval Update* | Global search by title frontend/backend |
 | **0.2.1** | *Author Detail Update* | Edit author details, claim important authors for score boost |
 | **0.2.0** | *Authors Update* | Author ranking pages with time-range filter (7d/30d/90d/180d/360d/All) |

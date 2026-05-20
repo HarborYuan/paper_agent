@@ -107,79 +107,117 @@ async def process_paper_summary(sem: asyncio.Semaphore, llm: LLMService, paper: 
 
 async def run_worker():
     await logger.log("Starting worker cycle...")
-    
+
     # 1. Fetch
     fetcher = ArxivFetcher(categories=settings.ARXIV_CATEGORIES)
     # 2000 for MVP; usually good enough
     fetched_papers = await asyncio.to_thread(fetcher.fetch_papers, max_results=PAPER_SYNC_LIMIT)
     new_papers = fetcher.filter_new_papers(fetched_papers)
     fetcher.save_papers(new_papers)
-    
+
+    notifier = get_notifier()
+
+    # No new papers — send rest-day notification and stop early
+    if not new_papers:
+        await logger.log("No new papers retrieved.")
+        if notifier:
+            await notifier.send_message(
+                "😴 No new papers retrieved today. Taking a break!"
+            )
+        else:
+            await logger.log("No notifier configured.")
+        return
+
     llm = LLMService()
     sem = asyncio.Semaphore(CONCURRENCY_LIMIT)
-    
+
     # 2. Score NEW papers
     with Session(engine) as session:
         statement = select(Paper).where(Paper.status == "NEW")
         papers_to_score = session.exec(statement).all()
-        
+
+    scored_count = len(papers_to_score)
+    above_threshold_count = 0
+
     if papers_to_score:
         await logger.log(f"Scoring {len(papers_to_score)} papers...")
         await asyncio.gather(*[process_paper_score(sem, llm, p) for p in papers_to_score])
-    
+
+        # Count how many of the just-scored papers cleared the threshold
+        scored_ids = [p.id for p in papers_to_score]
+        with Session(engine) as session:
+            statement = select(Paper).where(
+                Paper.id.in_(scored_ids),
+                Paper.score >= SCORE_THRESHOLD,
+            )
+            above_threshold_count = len(session.exec(statement).all())
+
     # 3. Summarize SCORED papers (High score)
     with Session(engine) as session:
         statement = select(Paper).where(Paper.status == "SCORED") # Filtering handled in scoring step
         papers_to_summarize = session.exec(statement).all()
-        
+
     if papers_to_summarize:
         await logger.log(f"Summarizing {len(papers_to_summarize)} papers...")
         await asyncio.gather(*[process_paper_summary(sem, llm, p) for p in papers_to_summarize])
-        
+
     # 4. Notify
     with Session(engine) as session:
         statement = select(Paper).where(Paper.status == "SUMMARIZED")
         papers_to_notify = session.exec(statement).all()
-        
+
+    if not notifier:
+        await logger.log("No notifier configured.")
+        return
+
+    # Always emit a summary header about today's scoring activity
+    summary_msg = (
+        f"📊 Today's scoring\n"
+        f"   • Scored: {scored_count} paper(s)\n"
+        f"   • Above threshold (≥{SCORE_THRESHOLD}): {above_threshold_count}\n"
+    )
+    messages = [summary_msg]
+
     if papers_to_notify:
         await logger.log(f"Notifying {len(papers_to_notify)} papers...")
-        notifier = get_notifier()
-        if notifier:
-            # Group papers by published date
-            from collections import defaultdict
-            by_date = defaultdict(list)
+        # Group papers by published date
+        from collections import defaultdict
+        by_date = defaultdict(list)
+        for p in papers_to_notify:
+            date_key = p.published_at.strftime("%Y-%m-%d")
+            by_date[date_key].append(p)
+
+        # Sort dates (newest first), sort papers within each date by score desc
+        for date_key in sorted(by_date.keys(), reverse=True):
+            date_papers = sorted(by_date[date_key], key=lambda x: x.score or 0, reverse=True)
+            digest = f"📅 {date_key}  ({len(date_papers)} papers)\n"
+            digest += "─" * 30 + "\n\n"
+            for i, p in enumerate(date_papers, 1):
+                aff = f" | {p.main_affiliation}" if p.main_affiliation else ""
+                digest += f"{i}. {p.title}\n"
+                authors = p.authors_list
+                if authors:
+                    author_str = ", ".join(authors[:3])
+                    if len(authors) > 3:
+                        author_str += f" +{len(authors) - 3} more"
+                    digest += f"   👥 {author_str}\n"
+                digest += f"   ⭐ Score: {p.score}{aff}\n"
+                digest += f"   🔗 {p.pdf_url}\n"
+                if p.summary_personalized:
+                    tldr = p.summary_personalized[:150].replace("\n", " ")
+                    digest += f"   💡 {tldr}...\n"
+                digest += "\n"
+            messages.append(digest)
+
+    success = await notifier.send_messages(messages)
+
+    if success and papers_to_notify:
+        with Session(engine) as session:
             for p in papers_to_notify:
-                date_key = p.published_at.strftime("%Y-%m-%d")
-                by_date[date_key].append(p)
-            
-            # Sort dates (newest first), sort papers within each date by score desc
-            messages = []
-            for date_key in sorted(by_date.keys(), reverse=True):
-                date_papers = sorted(by_date[date_key], key=lambda x: x.score or 0, reverse=True)
-                digest = f"📅 {date_key}  ({len(date_papers)} papers)\n"
-                digest += "─" * 30 + "\n\n"
-                for i, p in enumerate(date_papers, 1):
-                    aff = f" | {p.main_affiliation}" if p.main_affiliation else ""
-                    digest += f"{i}. {p.title}\n"
-                    digest += f"   ⭐ Score: {p.score}{aff}\n"
-                    digest += f"   🔗 {p.pdf_url}\n"
-                    if p.summary_personalized:
-                        tldr = p.summary_personalized[:150].replace("\n", " ")
-                        digest += f"   💡 {tldr}...\n"
-                    digest += "\n"
-                messages.append(digest)
-            
-            success = await notifier.send_messages(messages)
-            
-            if success:
-                with Session(engine) as session:
-                    for p in papers_to_notify:
-                        db_p = session.get(Paper, p.id)
-                        db_p.status = "PUSHED"
-                        session.add(db_p)
-                    session.commit()
-        else:
-            await logger.log("No notifier configured.")
+                db_p = session.get(Paper, p.id)
+                db_p.status = "PUSHED"
+                session.add(db_p)
+            session.commit()
 
 
 async def process_single_paper(paper_id: str, force_rescore: bool = False):
