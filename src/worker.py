@@ -12,6 +12,7 @@ from src.services.notifier import get_notifier
 from src.services.pdf_service import pdf_service
 from src.services.settings_service import get_llm_config
 from src.services.usage_service import cost_since
+from src.services.report_service import run_scheduled_reports, report_to_lark, mark_pushed
 from src.utils import sanitize_text
 from src.logger import logger
 
@@ -170,13 +171,17 @@ async def run_worker():
 
     notifier = get_notifier()
 
-    # No new papers — send rest-day notification and stop early
+    # No new papers — send rest-day notification (plus any weekly/monthly report that is due) and stop early
     if not new_papers:
         await logger.log("No new papers retrieved.")
+        reports = await run_scheduled_reports(run_started_at.date(), None, log=logger.log)
         if notifier:
             await notifier.send_message(
                 "😴 No new papers retrieved today. Taking a break!"
             )
+            if reports and await notifier.send_messages([report_to_lark(r) for r in reports]):
+                for r in reports:
+                    mark_pushed(r.id)
         else:
             await logger.log("No notifier configured.")
         return
@@ -228,6 +233,10 @@ async def run_worker():
         statement = select(Paper).where(Paper.status == "SUMMARIZED")
         papers_to_notify = session.exec(statement).all()
 
+    # 4b. Reports (daily for this run's pushed papers; weekly / monthly when due).
+    # Generated before sending so they go out in the same batch, right after the digest.
+    reports = await run_scheduled_reports(run_started_at.date(), [p.id for p in papers_to_notify], llm=llm, log=logger.log)
+
     if not notifier:
         await logger.log("No notifier configured.")
         return
@@ -275,6 +284,10 @@ async def run_worker():
                 digest += "\n"
             messages.append(digest)
 
+    # Reports go right after the digest, each as its own card with its own title
+    for r in reports:
+        messages.append(report_to_lark(r))
+
     success = await notifier.send_messages(messages)
 
     if success and papers_to_notify:
@@ -284,6 +297,9 @@ async def run_worker():
                 db_p.status = "PUSHED"
                 session.add(db_p)
             session.commit()
+    if success:
+        for r in reports:
+            mark_pushed(r.id)
 
 
 async def process_single_paper(paper_id: str, force_rescore: bool = False):

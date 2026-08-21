@@ -1,0 +1,54 @@
+You are writing a {{ kind }} research-trend report for ONE reader, based on the papers that their personal paper agent selected (scored ≥ {{ score_threshold }}/100) in the period {{ period_label }}.
+
+READER PROFILE (what they care about — weight the report toward this; it is fine to say "nothing new for X this period"):
+{{ user_profile }}
+
+COMPUTED STATISTICS (exact; trust these numbers, do not recompute or invent others):
+{{ stats_json }}
+
+SELECTED PAPERS (sorted by score, highest first; "reason" is the agent's one-line verdict, "tldr" the first lines of its summary):
+{% for p in papers %}
+- [{{ p.id }}] {{ p.title }} — score {{ p.score }}{% if p.affiliation %} — {{ p.affiliation }}{% endif %}
+  reason: {{ p.reason }}
+{% if p.tldr %}  tldr: {{ p.tldr }}
+{% endif %}{% endfor %}
+
+{% if language == 'CN' %}
+Write the report in Chinese (keep paper titles, model/method names and arXiv ids in English). Keep the Markdown headings exactly as given below (English headings, Chinese content).
+{% else %}
+Write the report in English. Keep the Markdown headings exactly as given below.
+{% endif %}
+
+{% if kind == 'daily' %}
+LENGTH: short — about 150–250 words. Sections (use `##` headings, in this order):
+## Today at a Glance
+2–3 sentences: how many papers made it, where the mass is (topics / who published), anything unusual.
+## Read First
+The 1–3 papers most worth the reader's time, each as `[arxiv_id] Title — one sentence why`.
+## Topics
+3–6 bullets grouping today's papers by theme; cite ids.
+## Institutions
+1–2 lines: which companies / universities appear (use the counts).
+{% else %}
+LENGTH: {% if kind == 'weekly' %}about 400–600 words{% else %}about 600–900 words{% endif %}. Sections (use `##` headings, in this order):
+## Overview
+3–5 sentences: volume (selected / fetched / stage-2 reviewed), overall direction, how it compares with the previous period (use `prev` in the stats).
+## Topic Trends
+Cluster the selected papers into 3–7 themes. For each theme: one bold name, 1–3 sentences on what is happening and whether it is rising or fading, then 2–4 representative papers cited as `[arxiv_id] Title`.
+## Institutions
+Who is publishing what: use the company / university counts and their change vs the previous period; mention notable concentrations (e.g. one lab dominating a theme).
+## Must-Read Top 5
+Numbered list, each `[arxiv_id] Title — one line on why it matters to the reader`.
+## Signals & Directions
+3–6 bullets: emerging keywords, methods gaining traction, gaps relative to the reader's interests, anything the reader should watch.
+## Numbers
+Plain bullets (no tables): selected / fetched / stage-2 reviewed, average score, top categories, LLM cost for the period if present.
+{% endif %}
+
+RULES:
+- Cite papers only as `[arxiv_id] Title`; never invent papers, numbers, institutions or authors not present above.
+- If the institution statistics (companies / universities / affiliations) are empty, write a single sentence such as "No affiliation data was extracted for this period." and do not speculate further.
+- If `prev.fetched` is 0 there is no comparable previous period: do not compare or mention previous-period numbers.
+- Omit any statistic that is missing (null) from the stats; do not write "0" for it.
+- No preamble, no closing remarks, no tables, no code blocks — start directly with the first `##` heading.
+- Prefer concrete mechanisms and claims over adjectives.

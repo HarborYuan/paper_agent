@@ -21,6 +21,13 @@ class Settings(BaseSettings):
     SCORE_THRESHOLD: int = 85         # final score needed to summarize + notify
     STAGE2_TEXT_CHAR_LIMIT: int = 8000  # chars of full text shown to the stage-2 reviewer
 
+    # Reports (LLM-written trend summaries over the selected papers; pushed after the daily digest)
+    LLM_MODEL_REPORT: str = "anthropic/claude-sonnet-5"
+    REPORT_DAILY_ENABLED: bool = True      # one per run, covering the papers pushed in that run
+    REPORT_WEEKLY_ENABLED: bool = True     # on REPORT_WEEKLY_DAY, covering the previous 7 days
+    REPORT_MONTHLY_ENABLED: bool = True    # on the 1st, covering the previous calendar month
+    REPORT_WEEKLY_DAY: int = 0             # 0 = Monday … 6 = Sunday (UTC)
+
     # Notification (Lark / 飞书)
     LARK_WEBHOOK_URL: str | None = None
     ARXIV_CATEGORIES: List[str] = ["cs.CV", "cs.CL", "cs.AI"]

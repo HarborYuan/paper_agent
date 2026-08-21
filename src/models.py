@@ -77,3 +77,25 @@ class LLMUsage(SQLModel, table=True):
     latency_ms: Optional[int] = None
     success: bool = True
     created_at: datetime = Field(default_factory=datetime.now, index=True)
+
+
+class Report(SQLModel, table=True):
+    """
+    LLM-written trend report (daily / weekly / monthly) over the high-scoring papers of a period,
+    plus the computed statistics it was based on. Pushed to Lark right after the daily digest.
+    """
+    id: Optional[int] = Field(default=None, primary_key=True)
+    kind: str = Field(index=True)                 # daily | weekly | monthly
+    period_start: datetime = Field(index=True)    # inclusive
+    period_end: datetime                          # exclusive
+    period_label: str                             # "2026-08-21" / "2026-08-18 – 2026-08-24" / "2026-07"
+    title: str
+    content: str                                  # markdown
+    stats: Optional[str] = None                   # JSON
+    paper_ids: Optional[str] = None               # JSON list of arXiv ids covered
+    paper_count: int = 0
+    model: Optional[str] = None
+    pushed: bool = False
+    pushed_at: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)

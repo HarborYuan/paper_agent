@@ -10,7 +10,7 @@ from src.models import Paper, LLMUsage
 from src.services.prompt_service import prompt_service
 from src.services.settings_service import (
     get_llm_config, LLMConfig,
-    TASK_STAGE1, TASK_STAGE2, TASK_SUMMARY, TASK_AFFILIATION,
+    TASK_STAGE1, TASK_STAGE2, TASK_SUMMARY, TASK_AFFILIATION, TASK_REPORT,
 )
 from src.services.model_catalog import model_catalog
 from src.utils import sanitize_text
@@ -298,6 +298,11 @@ class LLMService:
             user_profile=user_profile,
         )
         return await self._chat(TASK_SUMMARY, prompt, json_mode=False, temperature=0.3, paper_id=paper.id)
+
+    # ------------------------------------------------------------------ reports
+    async def generate_report(self, prompt: str, ref: Optional[str] = None) -> Optional[str]:
+        """Free-form markdown report (daily / weekly / monthly trend summary)."""
+        return await self._chat(TASK_REPORT, prompt, json_mode=False, temperature=0.4, paper_id=ref)
 
     # ------------------------------------------------------------------ affiliation
     async def extract_affiliations(self, paper: Paper, full_text: str) -> Optional[AffiliationResponse]:

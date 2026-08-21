@@ -25,6 +25,11 @@ from src.services.settings_service import (
 )
 from src.services.model_catalog import model_catalog
 from src.services.usage_service import usage_summary, estimate as estimate_cost
+from src.services.report_service import (
+    KINDS as REPORT_KINDS, generate_report, report_to_lark, mark_pushed, period_for,
+)
+from src.services.notifier import get_notifier
+from src.models import Report
 
 
 
@@ -432,6 +437,7 @@ class LLMSettingsUpdate(SQLModel):
     stage1_model: Optional[str] = None
     stage2_model: Optional[str] = None
     summary_model: Optional[str] = None
+    report_model: Optional[str] = None
     stage2_threshold: Optional[int] = None
     score_threshold: Optional[int] = None
 
@@ -451,7 +457,7 @@ def _llm_settings_payload(warnings: Optional[List[str]] = None):
         "profile": settings.USER_PROFILE,
         "provider": desc["provider"],
         "env_file": desc["env_file"],
-        "models": {"stage1": cfg.stage1_model, "stage2": cfg.stage2_model, "summary": cfg.summary_model},
+        "models": {"stage1": cfg.stage1_model, "stage2": cfg.stage2_model, "summary": cfg.summary_model, "report": cfg.report_model},
         "thresholds": {"stage2_threshold": cfg.stage2_threshold, "score_threshold": cfg.score_threshold},
         "defaults": llm_defaults(),
         "summary_language": settings.SUMMARY_LANGUAGE,
@@ -521,7 +527,7 @@ async def put_model_settings(update: LLMSettingsUpdate):
     # whose ids match the catalog; legacy endpoints use their own ids)
     await model_catalog.refresh()
     if settings.llm_provider == "openrouter" and model_catalog.status()["count"] > 0:
-        for field in ("stage1_model", "stage2_model", "summary_model"):
+        for field in ("stage1_model", "stage2_model", "summary_model", "report_model"):
             mid = getattr(update, field)
             if mid and model_catalog.get(mid.strip()) is None:
                 raise HTTPException(status_code=400, detail=f"Unknown model id for {field}: {mid}")
@@ -530,6 +536,7 @@ async def put_model_settings(update: LLMSettingsUpdate):
             stage1_model=update.stage1_model,
             stage2_model=update.stage2_model,
             summary_model=update.summary_model,
+            report_model=update.report_model,
             stage2_threshold=update.stage2_threshold,
             score_threshold=update.score_threshold,
         )
@@ -567,6 +574,7 @@ async def get_llm_estimate(
     stage1_model: Optional[str] = None,
     stage2_model: Optional[str] = None,
     summary_model: Optional[str] = None,
+    report_model: Optional[str] = None,
     stage2_threshold: Optional[int] = None,
     score_threshold: Optional[int] = None,
     session: Session = Depends(get_session),
@@ -580,9 +588,93 @@ async def get_llm_estimate(
     if stage1_model: cfg.stage1_model = stage1_model
     if stage2_model: cfg.stage2_model = stage2_model
     if summary_model: cfg.summary_model = summary_model
+    if report_model: cfg.report_model = report_model
     if stage2_threshold is not None: cfg.stage2_threshold = stage2_threshold
     if score_threshold is not None: cfg.score_threshold = score_threshold
     return estimate_cost(session, cfg)
+
+# ---------------------------------------------------------------------------
+# Reports (daily / weekly / monthly trend summaries)
+# ---------------------------------------------------------------------------
+class ReportGenerateRequest(SQLModel):
+    kind: str
+    date: Optional[str] = None      # YYYY-MM-DD anchor (default: today, UTC)
+    replace: bool = True
+
+
+REPORT_GEN_LAST_RUN = {}  # (kind, date) -> timestamp
+
+
+@api.get("/reports")
+def list_reports(kind: Optional[str] = None, limit: int = 30, session: Session = Depends(get_session)):
+    """Reports, newest first. Optional ?kind=daily|weekly|monthly."""
+    q = select(Report)
+    if kind:
+        q = q.where(Report.kind == kind)
+    q = q.order_by(Report.period_start.desc(), Report.id.desc()).limit(limit)
+    return session.exec(q).all()
+
+
+@api.get("/reports/{report_id}")
+def get_report(report_id: int, session: Session = Depends(get_session)):
+    rep = session.get(Report, report_id)
+    if not rep:
+        raise HTTPException(status_code=404, detail="Report not found")
+    return rep
+
+
+@api.post("/reports/generate")
+async def generate_report_endpoint(req: ReportGenerateRequest):
+    """
+    Generate (or regenerate) a report on demand. daily = that day; weekly = the 7 days before `date`;
+    monthly = previous month when `date` is the 1st, otherwise the month containing `date`.
+    Rate limited to once per 60 s per kind+date.
+    """
+    if req.kind not in REPORT_KINDS:
+        raise HTTPException(status_code=400, detail=f"kind must be one of {list(REPORT_KINDS)}")
+    try:
+        ref = datetime.strptime(req.date, "%Y-%m-%d").date() if req.date else datetime.utcnow().date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+    key = (req.kind, ref.isoformat())
+    now = datetime.now()
+    last = REPORT_GEN_LAST_RUN.get(key)
+    if last and (now - last).total_seconds() < 60:
+        raise HTTPException(status_code=429, detail="Please wait a minute before regenerating this report.")
+    REPORT_GEN_LAST_RUN[key] = now
+    rep = await generate_report(req.kind, ref, replace=req.replace)
+    if rep is None:
+        start, end, label = period_for(req.kind, ref)
+        raise HTTPException(status_code=404, detail=f"No papers above the score threshold in {label} (or the LLM call failed).")
+    return rep
+
+
+@api.post("/reports/{report_id}/push")
+async def push_report(report_id: int, session: Session = Depends(get_session)):
+    """Send a report to the configured Lark webhook."""
+    rep = session.get(Report, report_id)
+    if not rep:
+        raise HTTPException(status_code=404, detail="Report not found")
+    notifier = get_notifier()
+    if not notifier:
+        raise HTTPException(status_code=400, detail="No notifier configured (set LARK_WEBHOOK_URL in Settings).")
+    ok = await notifier.send_messages([report_to_lark(rep)])
+    if not ok:
+        raise HTTPException(status_code=502, detail="Lark webhook rejected the message.")
+    mark_pushed(rep.id)
+    session.refresh(rep)
+    return rep
+
+
+@api.delete("/reports/{report_id}")
+def delete_report(report_id: int, session: Session = Depends(get_session)):
+    rep = session.get(Report, report_id)
+    if not rep:
+        raise HTTPException(status_code=404, detail="Report not found")
+    session.delete(rep)
+    session.commit()
+    return {"deleted": report_id}
+
 
 @api.get("/health")
 def read_root():
@@ -605,15 +697,25 @@ if os.path.exists(frontend_dist):
     # Mount /assets separately so Vite-built JS/CSS/images are served directly
     assets_dir = os.path.join(frontend_dist, "assets")
     if os.path.exists(assets_dir):
-        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+        class CachedStaticFiles(StaticFiles):
+            async def get_response(self, path, scope):
+                resp = await super().get_response(path, scope)
+                if resp.status_code == 200:
+                    resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+                return resp
+        app.mount("/assets", CachedStaticFiles(directory=assets_dir), name="assets")
 
     # SPA catch-all: any route not matched by the API or /assets
     # serves the frontend index.html so client-side routing works on refresh
+    # The app shell must always be revalidated, otherwise browsers keep a stale index.html
+    # (and therefore stale JS) across upgrades; hashed /assets/* are safe to cache for long.
+    NO_CACHE = {"Cache-Control": "no-cache"}
+
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str):
         # If the requested file exists on disk, serve it (e.g. favicon, manifest)
         file_path = os.path.join(frontend_dist, full_path)
         if full_path and os.path.isfile(file_path):
-            return FileResponse(file_path)
+            return FileResponse(file_path, headers=NO_CACHE)
         # Otherwise, serve index.html for client-side routing
-        return FileResponse(os.path.join(frontend_dist, "index.html"))
+        return FileResponse(os.path.join(frontend_dist, "index.html"), headers=NO_CACHE)

@@ -19,7 +19,8 @@ TASK_STAGE1 = "score_stage1"
 TASK_STAGE2 = "score_stage2"
 TASK_SUMMARY = "summarize"
 TASK_AFFILIATION = "affiliation"
-ALL_TASKS = [TASK_STAGE1, TASK_STAGE2, TASK_SUMMARY, TASK_AFFILIATION]
+TASK_REPORT = "report"
+ALL_TASKS = [TASK_STAGE1, TASK_STAGE2, TASK_SUMMARY, TASK_AFFILIATION, TASK_REPORT]
 
 
 # ---------------------------------------------------------------------------
@@ -60,6 +61,12 @@ SCHEMA: List[Field] = [
     Field("SCORE_THRESHOLD", "models", "int", "Score threshold", "", min=0, max=100, owner="models"),
     Field("STAGE2_TEXT_CHAR_LIMIT", "pipeline", "int", "Stage-2 text limit (chars)",
           "How much of the PDF text the stage-2 reviewer sees.", min=1000, max=200000),
+    # Reports
+    Field("LLM_MODEL_REPORT", "models", "str", "Report model", "", owner="models"),
+    Field("REPORT_DAILY_ENABLED", "reports", "bool", "Daily report", "After each run: a short trend note on the papers pushed in that run (sent with the digest)."),
+    Field("REPORT_WEEKLY_ENABLED", "reports", "bool", "Weekly report", "Covers the previous 7 days; generated on the weekday below."),
+    Field("REPORT_MONTHLY_ENABLED", "reports", "bool", "Monthly report", "Covers the previous calendar month; generated on the 1st."),
+    Field("REPORT_WEEKLY_DAY", "reports", "int", "Weekly report day (0 = Monday … 6 = Sunday, UTC)", "", min=0, max=6),
     # Pipeline
     Field("ARXIV_CATEGORIES", "pipeline", "list", "arXiv categories", "Comma-separated, e.g. cs.CV, cs.CL, cs.AI."),
     Field("SUMMARY_LANGUAGE", "pipeline", "enum", "Summary language", "", options=["EN", "CN"]),
@@ -239,12 +246,15 @@ class LLMConfig:
     summary_model: str
     stage2_threshold: int
     score_threshold: int
+    report_model: str = "anthropic/claude-sonnet-5"
 
     def model_for_task(self, task: str) -> str:
         if task == TASK_STAGE2:
             return self.stage2_model
         if task == TASK_SUMMARY:
             return self.summary_model
+        if task == TASK_REPORT:
+            return self.report_model
         # stage-1 screening and affiliation extraction both use the cheap model
         return self.stage1_model
 
@@ -259,6 +269,7 @@ def get_llm_config() -> LLMConfig:
         summary_model=settings.LLM_MODEL_SUMMARY,
         stage2_threshold=int(settings.STAGE2_THRESHOLD),
         score_threshold=int(settings.SCORE_THRESHOLD),
+        report_model=settings.LLM_MODEL_REPORT,
     )
 
 
@@ -268,10 +279,13 @@ def update_llm_config(
     summary_model: Optional[str] = None,
     stage2_threshold: Optional[int] = None,
     score_threshold: Optional[int] = None,
+    report_model: Optional[str] = None,
 ) -> Tuple[LLMConfig, List[str]]:
     values: Dict[str, Any] = {}
     if stage1_model:
         values["LLM_MODEL_STAGE1"] = stage1_model
+    if report_model:
+        values["LLM_MODEL_REPORT"] = report_model
     if stage2_model:
         values["LLM_MODEL_STAGE2"] = stage2_model
     if summary_model:
@@ -289,6 +303,7 @@ def llm_defaults() -> Dict[str, Any]:
         "stage1": Settings.model_fields["LLM_MODEL_STAGE1"].default,
         "stage2": Settings.model_fields["LLM_MODEL_STAGE2"].default,
         "summary": Settings.model_fields["LLM_MODEL_SUMMARY"].default,
+        "report": Settings.model_fields["LLM_MODEL_REPORT"].default,
         "stage2_threshold": Settings.model_fields["STAGE2_THRESHOLD"].default,
         "score_threshold": Settings.model_fields["SCORE_THRESHOLD"].default,
     }

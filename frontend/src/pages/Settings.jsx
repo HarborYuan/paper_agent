@@ -10,6 +10,7 @@ const TASK_META = {
     score_stage2: { label: 'Stage 2 · Review', hint: 'Papers above the stage-2 threshold: abstract + start of the PDF, judges relevance and quality. Final score.' },
     summarize: { label: 'Summary', hint: 'Papers above the score threshold: full-text structured summary.' },
     affiliation: { label: 'Affiliation', hint: 'Header parsing for summarized papers (uses the Stage 1 model).' },
+    report: { label: 'Reports', hint: 'Daily / weekly / monthly trend reports written from the selected papers + computed stats (≈1.2 calls/day).' },
 };
 
 const fmtUSD = (v, digits = 4) => (v === null || v === undefined || Number.isNaN(v)) ? '—' : `$${Number(v).toFixed(digits)}`;
@@ -119,7 +120,7 @@ export default function Settings() {
     const [catalogStatus, setCatalogStatus] = useState(null);
 
     // editable draft
-    const [draft, setDraft] = useState({ stage1: '', stage2: '', summary: '', stage2_threshold: 60, score_threshold: 85 });
+    const [draft, setDraft] = useState({ stage1: '', stage2: '', summary: '', report: '', stage2_threshold: 60, score_threshold: 85 });
     const [saving, setSaving] = useState(false);
     const [saveMsg, setSaveMsg] = useState(null); // {type:'ok'|'err', text}
 
@@ -164,6 +165,7 @@ export default function Settings() {
                 stage1: sRes.data.models.stage1,
                 stage2: sRes.data.models.stage2,
                 summary: sRes.data.models.summary,
+                report: sRes.data.models.report,
                 stage2_threshold: sRes.data.thresholds.stage2_threshold,
                 score_threshold: sRes.data.thresholds.score_threshold,
             });
@@ -200,7 +202,7 @@ export default function Settings() {
             try {
                 const res = await axios.get(`${API_URL}/llm/estimate`, {
                     params: {
-                        stage1_model: draft.stage1, stage2_model: draft.stage2, summary_model: draft.summary,
+                        stage1_model: draft.stage1, stage2_model: draft.stage2, summary_model: draft.summary, report_model: draft.report,
                         stage2_threshold: draft.stage2_threshold, score_threshold: draft.score_threshold,
                     },
                 });
@@ -218,6 +220,7 @@ export default function Settings() {
         draft.stage1 !== settings.models.stage1 ||
         draft.stage2 !== settings.models.stage2 ||
         draft.summary !== settings.models.summary ||
+        draft.report !== settings.models.report ||
         Number(draft.stage2_threshold) !== settings.thresholds.stage2_threshold ||
         Number(draft.score_threshold) !== settings.thresholds.score_threshold
     );
@@ -226,7 +229,7 @@ export default function Settings() {
         setSaving(true); setSaveMsg(null);
         try {
             const res = await axios.put(`${API_URL}/settings/llm`, {
-                stage1_model: draft.stage1, stage2_model: draft.stage2, summary_model: draft.summary,
+                stage1_model: draft.stage1, stage2_model: draft.stage2, summary_model: draft.summary, report_model: draft.report,
                 stage2_threshold: Number(draft.stage2_threshold), score_threshold: Number(draft.score_threshold),
             });
             setSettings(res.data);
@@ -243,7 +246,7 @@ export default function Settings() {
     const handleReset = () => {
         if (!settings) return;
         setDraft({
-            stage1: settings.defaults.stage1, stage2: settings.defaults.stage2, summary: settings.defaults.summary,
+            stage1: settings.defaults.stage1, stage2: settings.defaults.stage2, summary: settings.defaults.summary, report: settings.defaults.report,
             stage2_threshold: settings.defaults.stage2_threshold, score_threshold: settings.defaults.score_threshold,
         });
     };
@@ -349,9 +352,10 @@ export default function Settings() {
                                     <ModelSelect label="Stage 1 · Screening" hint={TASK_META.score_stage1.hint} value={draft.stage1} onChange={v => setDraft(d => ({ ...d, stage1: v }))} models={models} />
                                     <ModelSelect label="Stage 2 · Review" hint={TASK_META.score_stage2.hint} value={draft.stage2} onChange={v => setDraft(d => ({ ...d, stage2: v }))} models={models} />
                                     <ModelSelect label="Summary" hint={TASK_META.summarize.hint} value={draft.summary} onChange={v => setDraft(d => ({ ...d, summary: v }))} models={models} />
+                                    <ModelSelect label="Reports" hint={TASK_META.report.hint} value={draft.report} onChange={v => setDraft(d => ({ ...d, report: v }))} models={models} />
                                 </>
                             ) : (
-                                ['stage1', 'stage2', 'summary'].map(k => (
+                                ['stage1', 'stage2', 'summary', 'report'].map(k => (
                                     <div key={k} className="mb-5">
                                         <label className="text-sm font-bold text-slate-200 block mb-1">{k}</label>
                                         <input value={draft[k]} onChange={e => setDraft(d => ({ ...d, [k]: e.target.value }))} className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2.5 font-mono text-sm text-slate-200 focus:outline-none focus:border-cyan-500" />
@@ -559,6 +563,7 @@ const CONFIG_GROUPS = [
     { key: 'provider', label: 'LLM provider', icon: KeyRound },
     { key: 'pipeline', label: 'Pipeline', icon: Cpu },
     { key: 'schedule', label: 'Schedule', icon: Clock },
+    { key: 'reports', label: 'Reports', icon: Activity },
     { key: 'notification', label: 'Notification', icon: Bell },
     { key: 'system', label: 'System (read-only)', icon: Database },
 ];

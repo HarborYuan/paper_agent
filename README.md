@@ -5,7 +5,7 @@
   </p>
   <p align="center">
     <a href="https://github.com/HarborYuan/paper_agent/actions/workflows/docker-publish.yml"><img src="https://github.com/HarborYuan/paper_agent/actions/workflows/docker-publish.yml/badge.svg" alt="Docker Build"></a>
-    <img src="https://img.shields.io/badge/version-0.4.0-cyan" alt="Version">
+    <img src="https://img.shields.io/badge/version-0.5.0-cyan" alt="Version">
     <img src="https://img.shields.io/badge/python-3.13+-blue?logo=python&logoColor=white" alt="Python">
     <img src="https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white" alt="FastAPI">
     <img src="https://img.shields.io/badge/React-61DAFB?logo=react&logoColor=black" alt="React">
@@ -24,6 +24,7 @@
 | ⚙️ **Everything editable in the UI** | All `.env` keys (provider keys, models, thresholds, categories, schedule, profile, Lark webhook) edited from Settings, written back to the env file and hot-applied — secrets never leave the server |
 | 💸 **Cost tracking & estimates** | Real spend per call (from provider usage), today / 7d / 30d totals, and a live per-day / per-month estimate for any model selection |
 | 📝 **Smart Summaries** | Generates personalized markdown summaries with TL;DR, contributions, methodology |
+| 📰 **Daily / Weekly / Monthly Reports** | LLM-written trend reports over the selected papers — topic clusters, institution counts vs. previous period, must-read top 5, signals — stored in the app and pushed to Lark right after the digest |
 | 📬 **Notifications** | Pushes daily digest to Lark (飞书) via webhook |
 | 🌐 **Web UI** | Beautiful dark-theme interface with day-by-day infinite scroll |
 | 🎚️ **Adjustable Threshold** | Filter papers by score with a live slider |
@@ -39,6 +40,7 @@
 
 | Version | Name | Highlights |
 |---------|------|------------|
+| **0.5.0** | *Report Update* | Daily / weekly / monthly trend reports (Python-computed stats + LLM narrative), Reports page with on-demand generate / push / delete, report model slot + cost estimate, `Cache-Control` on the app shell so upgrades never serve a stale frontend |
 | **0.4.0** | *Scoring Update* | Two-stage scoring (cheap screen → strong review w/ paper text + quality rubric), OpenRouter provider, per-stage model picker in Settings, real cost accounting + cost estimates, profile-aware "Relevance to Me" summary section, full `.env` editing from the UI (write-back + hot reload, secrets masked). **Breaking:** all API routes moved under `/api/` |
 | **0.3.1** | *Notification Update* | Authors in digest, rest-day notification, daily scoring stats |
 | **0.3.0** | *Retrieval Update* | Global search by title frontend/backend |
@@ -67,6 +69,18 @@ arXiv fetch ─► Stage 1 (cheap model, title+abstract) ─► score ≥ STAGE2
 - The PDF text fetched for stage 2 is cached on the paper and reused by summarization.
 - Every LLM call is logged with tokens + cost (`GET /api/llm/usage`); the Settings page shows real spend and a live estimate for any model selection.
 - A manual score (`PATCH /api/papers/{id}/score`, or click the score badge in the UI) still overrides everything and disables re-scoring.
+
+### Reports
+
+After the digest, the run generates whichever reports are due and sends them as extra Lark cards right behind it:
+
+| Report | When | Covers |
+|---|---|---|
+| 📰 Daily | after every run that pushed papers | the papers pushed in that run |
+| 📊 Weekly | on `REPORT_WEEKLY_DAY` (default Monday, UTC) | the previous 7 days (papers ≥ `SCORE_THRESHOLD`) |
+| 📈 Monthly | on the 1st | the previous calendar month |
+
+Python computes the statistics first (selected / fetched / stage-2 counts, company & university counts **with deltas vs. the previous period**, categories, top and important authors, score distribution, LLM cost); the report model then writes the narrative from those numbers plus the paper list — topic clusters with cited arXiv ids, institution moves, must-read top 5, emerging signals. Reports live in the **Reports** page (generate any period on demand, push to Lark, delete) and are written in `SUMMARY_LANGUAGE`.
 
 ---
 
@@ -143,6 +157,9 @@ docker-compose up -d
 | `USER_PROFILE` | Your research-interest prompt (drives scoring + summaries) | generic CV/MM profile |
 | `LARK_WEBHOOK_URL` | Lark (飞书) bot webhook; empty = no notifications | — |
 | `STAGE2_TEXT_CHAR_LIMIT` | Chars of PDF text shown to the stage-2 reviewer | `8000` |
+| `LLM_MODEL_REPORT` | Model for the trend reports | `anthropic/claude-sonnet-5` |
+| `REPORT_DAILY_ENABLED` / `REPORT_WEEKLY_ENABLED` / `REPORT_MONTHLY_ENABLED` | Which reports to generate and push | `true` |
+| `REPORT_WEEKLY_DAY` | Weekday for the weekly report (0 = Monday … 6 = Sunday, UTC) | `0` |
 
 Everything except `PUID`/`PGID`/`DATABASE_URL` can also be edited at runtime from the Settings page (see below). The image exposes port `8000` and persists DB + `.env` in the `/config` volume.
 
@@ -200,6 +217,9 @@ All endpoints are served under the **`/api`** prefix (e.g. `GET /api/papers`) so
 | `GET` | `/api/models` | Provider model catalog with list prices (`?q=` filter, `?refresh=true`) |
 | `GET` | `/api/llm/usage` | Real spend: today / 7d / 30d / all-time + per task/model breakdown |
 | `GET` | `/api/llm/estimate` | Projected cost per day/month for a model selection (query params override current settings) |
+| `GET` | `/api/reports` · `/api/reports/{id}` | List (`?kind=daily\|weekly\|monthly`) / read trend reports |
+| `POST` | `/api/reports/generate` | `{"kind": "weekly", "date": "YYYY-MM-DD"}` — generate or regenerate a report on demand (rate-limited) |
+| `POST` / `DELETE` | `/api/reports/{id}/push` · `/api/reports/{id}` | Push a report to Lark / delete it |
 | `WS` | `/api/ws/logs` | Live log stream (used by the in-app log viewer) |
 | `GET` | `/health` · `/api/health` | Liveness probe |
 

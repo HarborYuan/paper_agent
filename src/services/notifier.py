@@ -1,18 +1,25 @@
 import httpx
 from abc import ABC, abstractmethod
-from typing import Optional, List
+from typing import Optional, List, Union, Tuple
 from src.config import settings
 
 class Notifier(ABC):
     @abstractmethod
-    async def send_message(self, message: str) -> bool:
+    async def send_message(self, message: str, title: Optional[str] = None) -> bool:
         pass
 
-    async def send_messages(self, messages: List[str]) -> bool:
-        """Send multiple messages sequentially. Override for batch-aware implementations."""
+    async def send_messages(self, messages: List[Union[str, Tuple[str, str]]]) -> bool:
+        """
+        Send multiple messages sequentially. Each item is either a plain string
+        or a (title, text) tuple. Override for batch-aware implementations.
+        """
         all_ok = True
-        for msg in messages:
-            ok = await self.send_message(msg)
+        for item in messages:
+            if isinstance(item, tuple):
+                title, msg = item
+            else:
+                title, msg = None, item
+            ok = await self.send_message(msg, title=title)
             if not ok:
                 all_ok = False
         return all_ok
@@ -23,7 +30,9 @@ class LarkNotifier(Notifier):
     def __init__(self, webhook_url: str):
         self.webhook_url = webhook_url
 
-    async def send_message(self, message: str) -> bool:
+    DEFAULT_TITLE = "📄 Paper Agent"
+
+    async def send_message(self, message: str, title: Optional[str] = None) -> bool:
         async with httpx.AsyncClient() as client:
             try:
                 lines = message.strip().split("\n")
@@ -38,7 +47,7 @@ class LarkNotifier(Notifier):
                     "content": {
                         "post": {
                             "zh_cn": {
-                                "title": "📄 Paper Agent",
+                                "title": title or self.DEFAULT_TITLE,
                                 "content": content_lines
                             }
                         }

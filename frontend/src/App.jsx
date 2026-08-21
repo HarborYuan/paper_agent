@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import axios from 'axios';
 import { format, subDays, isToday, isYesterday } from 'date-fns';
 import Masonry from 'react-masonry-css';
-import { RefreshCw, Zap, Plus, X, Terminal, Users, Settings, Search } from 'lucide-react';
+import { RefreshCw, Zap, Plus, X, Terminal, Users, Settings, Search, Newspaper } from 'lucide-react';
 import { useInView } from 'react-intersection-observer';
 import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
 
@@ -12,6 +12,7 @@ import PaperDetail from './pages/PaperDetail';
 import Authors from './pages/Authors';
 import AuthorDetail from './pages/AuthorDetail';
 import SettingsPage from './pages/Settings';
+import Reports from './pages/Reports';
 import LogViewer from './components/LogViewer';
 
 const API_URL = '/api'; // All backend endpoints live under /api (same origin)
@@ -380,6 +381,14 @@ function AppContent() {
             </Link>
 
             <Link
+              to="/reports"
+              className="flex items-center gap-2 px-4 py-2 rounded-lg font-bold bg-slate-800 text-slate-200 hover:bg-slate-700 transition-all border border-slate-700"
+            >
+              <Newspaper size={18} />
+              Reports
+            </Link>
+
+            <Link
               to="/settings"
               className="flex items-center gap-2 px-4 py-2 rounded-lg font-bold bg-slate-800 text-slate-200 hover:bg-slate-700 transition-all border border-slate-700"
             >
@@ -543,6 +552,7 @@ function App() {
         <Route path="/paper/:id" element={<PaperDetail />} />
         <Route path="/authors" element={<Authors />} />
         <Route path="/author/:name" element={<AuthorDetail />} />
+        <Route path="/reports" element={<Reports />} />
         <Route path="/settings" element={<SettingsPage />} />
       </Routes>
     </BrowserRouter>

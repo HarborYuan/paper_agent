@@ -77,7 +77,7 @@ def test_get_settings(client):
     r = client.get("/api/settings/llm")
     assert r.status_code == 200
     data = r.json()
-    assert set(data["models"].keys()) == {"stage1", "stage2", "summary"}
+    assert set(data["models"].keys()) == {"stage1", "stage2", "summary", "report"}
     assert "stage2_threshold" in data["thresholds"]
     assert "key_configured" in data["provider"]
     assert "profile" in data
