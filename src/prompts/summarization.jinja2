@@ -3,6 +3,11 @@ Please summarize the following paper for me.
 
 Target Audience: A researcher in this field.
 
+{% if user_profile %}
+MY RESEARCH PROFILE (use it only for the "Relevance to Me" section; keep every other section objective):
+{{ user_profile }}
+{% endif %}
+
 Format Requirement:
 {% if language == 'CN' %}
 Please structure your summary using the following exactly-named Markdown headings (using `##`). Keep the headings such as "## Problem" in English, but please output the content in Chinese.
@@ -33,6 +38,11 @@ Claimed improvements (speed/performance/generalization/cost).
 ## Ablation
 Whether ablation studies are included.
 
+{% if user_profile %}
+## Relevance to Me
+2-4 sentences: which of my interests this touches, what is directly reusable (idea / recipe / data / benchmark), and whether it is worth a deep read.
+
+{% endif %}
 ## Missing Info
 Unclear points or questions after reading (these will become review questions).
 

@@ -6,6 +6,8 @@ import { Link } from 'react-router-dom';
 
 import axios from 'axios';
 
+const API_URL = '/api';
+
 // Import Logos
 import bytedanceLogo from '../assets/logos/bytedance.svg';
 import googleLogo from '../assets/logos/google.svg';
@@ -56,7 +58,9 @@ const PaperCard = ({ paper, onRefreshed }) => {
         category_primary,
         main_affiliation,
         main_company,
-        user_score
+        user_score,
+        score_stage1,
+        score_model
     } = paper;
 
     const [localScore, setLocalScore] = useState(paper.user_score ?? score);
@@ -77,7 +81,7 @@ const PaperCard = ({ paper, onRefreshed }) => {
                 alert("Score must be 0-100");
                 return;
             }
-            await axios.patch(`/papers/${paper.id}/score`, null, { params: { score: val } });
+            await axios.patch(`${API_URL}/papers/${paper.id}/score`, null, { params: { score: val } });
             setLocalScore(val);
             setIsEditingScore(false);
             if (onRefreshed) onRefreshed(paper.id); // Potentially trigger parent update
@@ -154,13 +158,13 @@ const PaperCard = ({ paper, onRefreshed }) => {
         if (refreshing) return;
         setRefreshing(true);
         try {
-            await axios.post(`/papers/${paper.id}/resummarize`);
+            await axios.post(`${API_URL}/papers/${paper.id}/resummarize`);
             // Poll for completion (check every 3s, up to 120s)
             let attempts = 0;
             const poll = setInterval(async () => {
                 attempts++;
                 try {
-                    const res = await axios.get(`/papers/${paper.id}`);
+                    const res = await axios.get(`${API_URL}/papers/${paper.id}`);
                     if (res.data.summary_personalized !== paper.summary_personalized || attempts >= 40) {
                         clearInterval(poll);
                         setRefreshing(false);
@@ -221,7 +225,7 @@ const PaperCard = ({ paper, onRefreshed }) => {
                                 <div
                                     onClick={handleScoreClick}
                                     className={`group/score flex items-center gap-1 px-2 py-0.5 rounded text-xs font-bold cursor-pointer transition-colors ${localScore >= 85 ? 'bg-green-500/20 text-green-400 hover:bg-green-500/30' : 'bg-yellow-500/20 text-yellow-400 hover:bg-yellow-500/30'}`}
-                                    title="Click to edit score"
+                                    title={`${user_score !== null && user_score !== undefined ? 'User score' : `${score_stage1 !== null && score_stage1 !== undefined ? `Stage 1: ${score_stage1} → ` : ''}final ${score}${score_model ? ` (${score_model})` : ''}`} · click to edit`}
                                 >
                                     <Star size={12} fill="currentColor" />
                                     {localScore}

@@ -266,7 +266,7 @@ class TestAuthorsAPIWithSpecialChars:
         session.commit()
 
         # GET /authors should include O'Regan
-        resp = client.get("/authors")
+        resp = client.get("/api/authors")
         assert resp.status_code == 200
         data = resp.json()
         names = [d["name"] for d in data]
@@ -285,7 +285,7 @@ class TestAuthorsAPIWithSpecialChars:
         session.add(p)
         session.commit()
 
-        resp = client.get("/authors/Declan%20P.%20O%27Regan/papers")
+        resp = client.get("/api/authors/Declan%20P.%20O%27Regan/papers")
         assert resp.status_code == 200
         data = resp.json()
         assert len(data) == 1

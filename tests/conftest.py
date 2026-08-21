@@ -30,3 +30,17 @@ def client_fixture(session: Session):
     client = TestClient(app)
     yield client
     app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def env_file(tmp_path, monkeypatch):
+    """Redirect env-file writes to a temp file and restore the live settings object afterwards."""
+    from src.config import settings as app_settings
+    from src.services import env_file as env_file_mod
+    path = tmp_path / ".env"
+    path.write_text('# test env\nOPENROUTER_API_KEY="sk-or-test-secret-1234"\nLLM_MODEL_STAGE1="openai/gpt-4o-mini"\n')
+    monkeypatch.setattr(env_file_mod, "resolve_env_file_path", lambda: path)
+    snapshot = {k: getattr(app_settings, k) for k in type(app_settings).model_fields}
+    yield path
+    for k, v in snapshot.items():
+        setattr(app_settings, k, v)

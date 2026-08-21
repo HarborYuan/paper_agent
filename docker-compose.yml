@@ -7,8 +7,9 @@ services:
       - PUID=1000
       - PGID=1000
       - TZ=UTC
-      # priority: 
-      # ENV VARIABLES -> /config/.env -> .env.example
+      # priority: ENV VARIABLES -> /config/.env -> code defaults
+      # (/config/.env is created from .env.example on first start and is what the Settings page edits;
+      #  anything set here overrides it and shows as "env var" in the UI)
       # - DATABASE_URL=sqlite:////config/paper_agent.db
       # - OPENAI_API_KEY=sk-your-key-here
       # - ENABLE_AUTO_UPDATE=true

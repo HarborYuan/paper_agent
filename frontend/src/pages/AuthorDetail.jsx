@@ -5,7 +5,7 @@ import Masonry from 'react-masonry-css';
 import { ChevronRight, Users, BookOpen, Search, Calendar, Edit2, Check, X, Globe, Building, Star, Save } from 'lucide-react';
 import PaperCard from '../components/PaperCard';
 
-const API_URL = '';
+const API_URL = '/api'; // All backend endpoints live under /api (same origin)
 
 const TIME_RANGES = [
     { label: '7d', value: 7 },

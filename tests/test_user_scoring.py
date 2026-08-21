@@ -54,7 +54,7 @@ def test_user_score_endpoint(client, session):
     session.commit()
 
     # 2. Set user score
-    response = client.patch("/papers/test.123/score", params={"score": 99})
+    response = client.patch("/api/papers/test.123/score", params={"score": 99})
     assert response.status_code == 200
     data = response.json()
     assert data["user_score"] == 99
@@ -68,7 +68,7 @@ def test_user_score_endpoint(client, session):
     assert paper.status == "SCORED"
 
     # 4. Test invalid score
-    response = client.patch("/papers/test.123/score", params={"score": 101})
+    response = client.patch("/api/papers/test.123/score", params={"score": 101})
     assert response.status_code == 400
 
 @pytest.mark.asyncio

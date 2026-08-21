@@ -3,6 +3,8 @@ import react from '@vitejs/plugin-react'
 
 import tailwindcss from '@tailwindcss/vite'
 
+const BACKEND = 'http://localhost:8000'
+
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [
@@ -11,16 +13,14 @@ export default defineConfig({
   ],
   server: {
     proxy: {
-      '/authors': 'http://localhost:8000',
-      '/papers': 'http://localhost:8000',
-      '/run': 'http://localhost:8000',
-      '/health': 'http://localhost:8000',
-      '/ws': {
-        target: 'ws://localhost:8000',
+      // Every backend endpoint (REST + WebSocket) is under /api, so one rule covers them all
+      '/api': {
+        target: BACKEND,
         ws: true,
       },
-      '/docs': 'http://localhost:8000',
-      '/openapi.json': 'http://localhost:8000',
+      '/health': BACKEND,
+      '/docs': BACKEND,
+      '/openapi.json': BACKEND,
     }
   }
 })

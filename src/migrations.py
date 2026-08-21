@@ -145,10 +145,31 @@ def migration_003_create_author_table(session: Session):
         logger.error(f"Migration 003 Failed: {e}")
         raise e
 
+def migration_004_two_stage_scoring(session: Session):
+    """
+    Two-stage scoring: add score_stage1 / score_model columns to paper.
+    (The LLMUsage table is created by SQLModel.metadata.create_all in init_db.)
+    """
+    logger.info("Migration 004: Adding two-stage scoring columns...")
+    try:
+        result = session.exec(text("PRAGMA table_info(paper)")).all()
+        columns = [row[1] for row in result]
+        if "score_stage1" not in columns:
+            session.exec(text("ALTER TABLE paper ADD COLUMN score_stage1 INTEGER"))
+            logger.info("Migration 004: added paper.score_stage1")
+        if "score_model" not in columns:
+            session.exec(text("ALTER TABLE paper ADD COLUMN score_model VARCHAR"))
+            logger.info("Migration 004: added paper.score_model")
+        session.commit()
+    except Exception as e:
+        logger.error(f"Migration 004 Failed: {e}")
+        raise e
+
 MIGRATIONS = [
     migration_001_add_user_score,
     migration_002_clean_authors,
     migration_003_create_author_table,
+    migration_004_two_stage_scoring,
 ]
 
 def check_and_migrate(dev_commit: bool = False):

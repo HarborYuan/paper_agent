@@ -21,7 +21,7 @@ def test_list_authors(client: TestClient, session: Session):
     session.add(p2)
     session.commit()
     
-    response = client.get("/authors")
+    response = client.get("/api/authors")
     assert response.status_code == 200
     data = response.json()
     
@@ -52,13 +52,13 @@ def test_list_papers_by_author(client: TestClient, session: Session):
     session.add(p2)
     session.commit()
     
-    response = client.get("/authors/Author%20A/papers")
+    response = client.get("/api/authors/Author%20A/papers")
     assert response.status_code == 200
     data = response.json()
     assert len(data) == 1
     assert data[0]["id"] == "1"
     
-    response = client.get("/authors/Author%20C/papers")
+    response = client.get("/api/authors/Author%20C/papers")
     assert response.status_code == 200
     assert response.json() == []
 
@@ -86,17 +86,17 @@ def test_list_authors_with_days_filter(client: TestClient, session: Session):
     session.commit()
     
     # Without filter: both authors
-    response = client.get("/authors")
+    response = client.get("/api/authors")
     assert len(response.json()) == 2
     
     # With 7-day filter: only Author A
-    response = client.get("/authors?days=7")
+    response = client.get("/api/authors?days=7")
     data = response.json()
     assert len(data) == 1
     assert data[0]["name"] == "Author A"
     
     # With 90-day filter: both authors
-    response = client.get("/authors?days=90")
+    response = client.get("/api/authors?days=90")
     assert len(response.json()) == 2
 
 def test_list_papers_by_author_with_days_filter(client: TestClient, session: Session):
@@ -121,19 +121,19 @@ def test_list_papers_by_author_with_days_filter(client: TestClient, session: Ses
     session.commit()
     
     # Without filter: both papers
-    response = client.get("/authors/Author%20A/papers")
+    response = client.get("/api/authors/Author%20A/papers")
     assert len(response.json()) == 2
     
     # 7 days: only recent
-    response = client.get("/authors/Author%20A/papers?days=7")
+    response = client.get("/api/authors/Author%20A/papers?days=7")
     data = response.json()
     assert len(data) == 1
     assert data[0]["id"] == "1"
     
     # 30 days: only recent
-    response = client.get("/authors/Author%20A/papers?days=30")
+    response = client.get("/api/authors/Author%20A/papers?days=30")
     assert len(response.json()) == 1
     
     # 90 days: both
-    response = client.get("/authors/Author%20A/papers?days=90")
+    response = client.get("/api/authors/Author%20A/papers?days=90")
     assert len(response.json()) == 2

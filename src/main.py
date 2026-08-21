@@ -1,7 +1,7 @@
 import os
 import json
 
-from fastapi import FastAPI, BackgroundTasks, HTTPException, Depends, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, APIRouter, BackgroundTasks, HTTPException, Depends, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -19,6 +19,12 @@ from src.worker import run_worker, process_single_paper, resummarize_single_pape
 from src.services.arxiv import ArxivFetcher
 from src.logger import logger
 from src.scheduler import SchedulerService
+from src.config import settings
+from src.services.settings_service import (
+    get_llm_config, update_llm_config, llm_defaults, describe_settings, update_settings,
+)
+from src.services.model_catalog import model_catalog
+from src.services.usage_service import usage_summary, estimate as estimate_cost
 
 
 
@@ -32,6 +38,11 @@ async def lifespan(app: FastAPI):
         await scheduler_service.start()
     except Exception as e:
         await logger.log(f"DB/Scheduler Init Error: {e}")
+    try:
+        ok = await model_catalog.refresh()
+        await logger.log(f"Model catalog: {'loaded ' + str(model_catalog.status()['count']) + ' models' if ok else 'unavailable (' + str(model_catalog.status()['last_error']) + ')'}")
+    except Exception as e:
+        await logger.log(f"Model catalog refresh failed: {e}")
     yield
     # Shutdown (if needed)
     scheduler_service.shutdown()
@@ -46,7 +57,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.websocket("/ws/logs")
+# All JSON/WebSocket endpoints live under /api so they can never collide with
+# frontend (client-side) routes such as /authors or /settings.
+api = APIRouter(prefix="/api")
+
+@api.websocket("/ws/logs")
 async def websocket_endpoint(websocket: WebSocket):
     await logger.connect(websocket)
     try:
@@ -55,7 +70,7 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         logger.disconnect(websocket)
 
-@app.post("/run")
+@api.post("/run")
 async def trigger_run(background_tasks: BackgroundTasks):
     """
     Trigger the paper fetching and processing cycle in the background.
@@ -66,7 +81,7 @@ async def trigger_run(background_tasks: BackgroundTasks):
 class AddPaperRequest(SQLModel):
     input: str
 
-@app.post("/papers/add")
+@api.post("/papers/add")
 async def add_paper(request: AddPaperRequest, background_tasks: BackgroundTasks, session: Session = Depends(get_session)):
     """
     Add a paper by arXiv ID or URL.
@@ -127,7 +142,7 @@ async def add_paper(request: AddPaperRequest, background_tasks: BackgroundTasks,
     
     return {"message": f"Paper {new_paper.id} added and processing started.", "paper": new_paper}
 
-@app.get("/papers", response_model=List[Paper])
+@api.get("/papers", response_model=List[Paper])
 def list_papers(
     status: Optional[str] = None, 
     limit: int = 50, 
@@ -160,7 +175,7 @@ def list_papers(
     results = session.exec(query).all()
     return results
 
-@app.get("/papers/search", response_model=List[Paper])
+@api.get("/papers/search", response_model=List[Paper])
 def search_papers(
     q: str = Query(..., description="Search by title"),
     limit: int = 50,
@@ -170,7 +185,7 @@ def search_papers(
     results = session.exec(query).all()
     return results
 
-@app.get("/papers/start-date")
+@api.get("/papers/start-date")
 def get_start_date(session: Session = Depends(get_session)):
     """
     Get the date of the earliest paper in the database.
@@ -184,7 +199,7 @@ def get_start_date(session: Session = Depends(get_session)):
         
     return {"date": result.date().isoformat()}
 
-@app.get("/papers/next-date")
+@api.get("/papers/next-date")
 def get_next_date(date: str, session: Session = Depends(get_session)):
     """
     Get the next available date with papers before the given date.
@@ -210,7 +225,7 @@ def get_next_date(date: str, session: Session = Depends(get_session)):
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
 
-@app.get("/papers/{paper_id}", response_model=Paper)
+@api.get("/papers/{paper_id}", response_model=Paper)
 def get_paper(paper_id: str, session: Session = Depends(get_session)):
     paper = session.get(Paper, paper_id)
     if not paper:
@@ -221,7 +236,7 @@ def get_paper(paper_id: str, session: Session = Depends(get_session)):
 RESCORE_LAST_RUN = {}  # date_str -> last_run_timestamp
 RESUMMARIZE_LAST_RUN = {}  # paper_id -> last_run_timestamp
 
-@app.post("/papers/{paper_id}/resummarize")
+@api.post("/papers/{paper_id}/resummarize")
 async def resummarize_paper(paper_id: str, background_tasks: BackgroundTasks, session: Session = Depends(get_session)):
     """
     Trigger re-summarization for a single paper.
@@ -247,7 +262,7 @@ async def resummarize_paper(paper_id: str, background_tasks: BackgroundTasks, se
     return {"message": f"Re-summarization started for paper {paper_id}"}
 
 
-@app.patch("/papers/{paper_id}/score")
+@api.patch("/papers/{paper_id}/score")
 async def update_paper_score(paper_id: str, score: int, session: Session = Depends(get_session)):
     """
     Manually set a score for a paper.
@@ -273,7 +288,7 @@ async def update_paper_score(paper_id: str, score: int, session: Session = Depen
 
 
 
-@app.post("/papers/re-score-date")
+@api.post("/papers/re-score-date")
 async def rescore_date(date: str, background_tasks: BackgroundTasks, session: Session = Depends(get_session)):
     """
     Trigger re-scoring for all papers on a specific date.
@@ -317,7 +332,7 @@ async def rescore_date(date: str, background_tasks: BackgroundTasks, session: Se
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
 
-@app.get("/authors")
+@api.get("/authors")
 def list_authors(days: Optional[int] = Query(None, description="Filter papers published within the last N days"), session: Session = Depends(get_session)):
     """
     Get a ranked list of authors by paper count.
@@ -347,7 +362,7 @@ class AuthorUpdate(SQLModel):
     affiliation: Optional[str] = None
     is_important: Optional[bool] = None
 
-@app.patch("/authors/{author_name}")
+@api.patch("/authors/{author_name}")
 async def update_author(author_name: str, update_data: AuthorUpdate, session: Session = Depends(get_session)):
     """
     Update author metadata (bio, website, affiliation, is_important).
@@ -372,7 +387,7 @@ async def update_author(author_name: str, update_data: AuthorUpdate, session: Se
     session.refresh(author)
     return author
 
-@app.get("/authors/{author_name}/details", response_model=Author)
+@api.get("/authors/{author_name}/details", response_model=Author)
 def get_author_details(author_name: str, session: Session = Depends(get_session)):
     author = session.get(Author, author_name)
     if not author:
@@ -381,7 +396,7 @@ def get_author_details(author_name: str, session: Session = Depends(get_session)
         return Author(name=author_name)
     return author
 
-@app.get("/authors/{author_name}/papers", response_model=List[Paper])
+@api.get("/authors/{author_name}/papers", response_model=List[Paper])
 def list_papers_by_author(author_name: str, days: Optional[int] = Query(None, description="Filter papers published within the last N days"), session: Session = Depends(get_session)):
     """
     Get all papers for a specific author.
@@ -404,14 +419,182 @@ def list_papers_by_author(author_name: str, days: Optional[int] = Query(None, de
     
     return filtered_papers
 
-@app.get("/profile")
+@api.get("/profile")
 def get_profile():
-    from src.config import settings
     return {"profile": settings.USER_PROFILE}
 
-@app.get("/health")
+
+# ---------------------------------------------------------------------------
+# Settings — backed by the env file (/config/.env in Docker, ./.env locally).
+# Saving rewrites only the touched keys and hot-applies them; secrets are never returned.
+# ---------------------------------------------------------------------------
+class LLMSettingsUpdate(SQLModel):
+    stage1_model: Optional[str] = None
+    stage2_model: Optional[str] = None
+    summary_model: Optional[str] = None
+    stage2_threshold: Optional[int] = None
+    score_threshold: Optional[int] = None
+
+
+class SettingsUpdate(SQLModel):
+    values: dict
+
+
+class ProfileUpdate(SQLModel):
+    profile: str
+
+
+def _llm_settings_payload(warnings: Optional[List[str]] = None):
+    cfg = get_llm_config()
+    desc = describe_settings()
+    return {
+        "profile": settings.USER_PROFILE,
+        "provider": desc["provider"],
+        "env_file": desc["env_file"],
+        "models": {"stage1": cfg.stage1_model, "stage2": cfg.stage2_model, "summary": cfg.summary_model},
+        "thresholds": {"stage2_threshold": cfg.stage2_threshold, "score_threshold": cfg.score_threshold},
+        "defaults": llm_defaults(),
+        "summary_language": settings.SUMMARY_LANGUAGE,
+        "catalog": model_catalog.status(),
+        "warnings": warnings or [],
+    }
+
+
+@api.get("/settings")
+def get_all_settings():
+    """Every editable setting with its effective value, source (env var / env file / default) and schema. Secrets masked."""
+    desc = describe_settings()
+    desc["scheduler"] = {"next_run_time": scheduler_service.next_run_time()}
+    return desc
+
+
+@api.put("/settings")
+async def put_all_settings(update: SettingsUpdate):
+    """
+    Update any editable settings: {"values": {"KEY": value, ...}}.
+    Writes the env file, hot-applies, and reloads the scheduler if schedule keys changed.
+    For secret keys, an empty value means "leave unchanged".
+    """
+    try:
+        applied, warnings = update_settings(update.values or {})
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except (OSError, PermissionError) as e:
+        raise HTTPException(status_code=500, detail=f"Could not write env file: {e}")
+    if any(k in applied for k in ("ENABLE_AUTO_UPDATE", "AUTO_UPDATE_TIME")):
+        await scheduler_service.reload()
+    if applied:
+        await logger.log(f"Settings updated: {', '.join(k for k in applied if not k.startswith('_'))}")
+    desc = describe_settings()
+    desc["scheduler"] = {"next_run_time": scheduler_service.next_run_time()}
+    desc["applied"] = applied
+    desc["warnings"] = warnings
+    return desc
+
+
+@api.put("/settings/profile")
+async def put_profile(update: ProfileUpdate):
+    """Update USER_PROFILE (written to the env file, applied immediately)."""
+    try:
+        applied, warnings = update_settings({"USER_PROFILE": update.profile})
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except (OSError, PermissionError) as e:
+        raise HTTPException(status_code=500, detail=f"Could not write env file: {e}")
+    await logger.log("Settings updated: USER_PROFILE")
+    return {"profile": settings.USER_PROFILE, "applied": applied, "warnings": warnings}
+
+
+@api.get("/settings/llm")
+def get_llm_settings():
+    """Current models / thresholds / provider status (used by the Models card)."""
+    return _llm_settings_payload()
+
+
+@api.put("/settings/llm")
+async def put_model_settings(update: LLMSettingsUpdate):
+    """
+    Update model selection / thresholds. Written to the env file and used by the next run.
+    Model ids are validated against the provider catalog when the provider is OpenRouter.
+    """
+    # Validate model ids against the catalog (only meaningful when the provider is OpenRouter,
+    # whose ids match the catalog; legacy endpoints use their own ids)
+    await model_catalog.refresh()
+    if settings.llm_provider == "openrouter" and model_catalog.status()["count"] > 0:
+        for field in ("stage1_model", "stage2_model", "summary_model"):
+            mid = getattr(update, field)
+            if mid and model_catalog.get(mid.strip()) is None:
+                raise HTTPException(status_code=400, detail=f"Unknown model id for {field}: {mid}")
+    try:
+        cfg, warnings = update_llm_config(
+            stage1_model=update.stage1_model,
+            stage2_model=update.stage2_model,
+            summary_model=update.summary_model,
+            stage2_threshold=update.stage2_threshold,
+            score_threshold=update.score_threshold,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except (OSError, PermissionError) as e:
+        raise HTTPException(status_code=500, detail=f"Could not write env file: {e}")
+    await logger.log(
+        f"Settings updated — stage1: {cfg.stage1_model} | stage2: {cfg.stage2_model} (>= {cfg.stage2_threshold}) | "
+        f"summary: {cfg.summary_model} (>= {cfg.score_threshold})"
+    )
+    return _llm_settings_payload(warnings)
+
+
+@api.get("/models")
+async def list_models(
+    q: Optional[str] = Query(None, description="Filter by substring of id/name"),
+    limit: Optional[int] = Query(None, description="Max results"),
+    refresh: bool = Query(False, description="Force refresh from provider"),
+):
+    """Provider model catalog with list prices (USD per 1M tokens)."""
+    await model_catalog.refresh(force=refresh)
+    items = [m.to_dict() for m in model_catalog.list(q=q, limit=limit)]
+    return {"models": items, "catalog": model_catalog.status()}
+
+
+@api.get("/llm/usage")
+def get_llm_usage(days: int = Query(30, description="Breakdown window in days"), session: Session = Depends(get_session)):
+    """Real LLM spend: totals for today/7d/30d/all-time and a by-task/by-model breakdown."""
+    return usage_summary(session, breakdown_days=days)
+
+
+@api.get("/llm/estimate")
+async def get_llm_estimate(
+    stage1_model: Optional[str] = None,
+    stage2_model: Optional[str] = None,
+    summary_model: Optional[str] = None,
+    stage2_threshold: Optional[int] = None,
+    score_threshold: Optional[int] = None,
+    session: Session = Depends(get_session),
+):
+    """
+    Projected cost per day / month for a model selection (defaults to the current settings).
+    Uses observed average tokens per task and observed paper volumes when available.
+    """
+    await model_catalog.refresh()
+    cfg = get_llm_config()
+    if stage1_model: cfg.stage1_model = stage1_model
+    if stage2_model: cfg.stage2_model = stage2_model
+    if summary_model: cfg.summary_model = summary_model
+    if stage2_threshold is not None: cfg.stage2_threshold = stage2_threshold
+    if score_threshold is not None: cfg.score_threshold = score_threshold
+    return estimate_cost(session, cfg)
+
+@api.get("/health")
 def read_root():
-    return {"message": "Welcome to Paper Agent. POST /run to start processing.", "docs": "/docs"}
+    return {"message": "Welcome to Paper Agent. POST /api/run to start processing.", "docs": "/docs", "api_prefix": "/api"}
+
+
+app.include_router(api)
+
+# Root-level liveness probe (kept outside /api for docker/uptime checks)
+@app.get("/health")
+def health_root():
+    return read_root()
 
 
 

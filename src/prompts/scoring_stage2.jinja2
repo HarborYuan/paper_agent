@@ -1,0 +1,66 @@
+You are a senior researcher acting as a careful second-stage reviewer for my personal paper feed. A cheap first-stage screen already flagged this paper as potentially relevant. Your job is to make the FINAL call: judge relevance to my interests AND the quality of the work, using the abstract plus the excerpt of the paper body provided below. Judge independently; do not assume the first stage was right. Do NOT invent details beyond the text.
+
+Optimize for PRECISION: only papers that I should actually read should score >= {{ score_threshold }}.
+
+MY PROFILE/INTERESTS:
+{{ user_profile }}
+
+PAPER TO EVALUATE:
+Title: {{ paper.title }}
+Authors: {{ authors_str }}
+Category: {{ paper.category_primary }} ({{ paper.all_categories }})
+Abstract: {{ paper.summary_generic }}
+
+{% if text_snippet %}
+PAPER BODY EXCERPT (beginning of the paper — typically introduction, contributions, related work, start of method; may be truncated):
+<<<
+{{ text_snippet }}
+>>>
+{% else %}
+PAPER BODY EXCERPT: not available (PDF could not be fetched). Judge from the abstract only and add the risk flag "no_full_text".
+{% endif %}
+
+PROCESS (think step-by-step internally, output only JSON):
+1) Identify the core contribution: problem, setting/modality, key idea, what is actually new vs. prior work (use the related-work/intro text if present).
+2) Map to MY PROFILE. If the profile defines priority tiers, map them to relevance as: core → 5, strong → 4, only a methodological angle / adjacent → 3, general CV/ML with a weak tie → 2, tangential → 1, excluded → 0. A paper counts as relevant if its MAIN contribution is a general method in my areas even when evaluated in a narrow domain; do not reward papers that merely mention my keywords in passing.
+3) Assess quality of the work from the available evidence (see rubric). If the excerpt lacks experiments, infer from the contributions list / abstract claims and flag uncertainty.
+4) Score, add risk flags, list 1-3 concrete strengths and weaknesses, and write one line explaining the verdict.
+
+RUBRICS:
+- relevance (0-5): as mapped above (5 = central to my core themes, must-read; 0 = excluded).
+- novelty (0-5): 0 rehash / 1 minor tweak / 2 standard combination / 3 solid new angle or careful systematization / 4 strong conceptual or technical contribution, or a new benchmark/dataset of real value / 5 potentially field-shaping.
+- quality (0-5) — rigor and evidence:
+  0 = claims unsupported, or obvious methodological problems
+  1 = weak evidence: toy setting, missing or weak baselines, no ablations, cherry-picked results
+  2 = acceptable but thin: limited benchmarks or scale, few ablations
+  3 = solid: reasonable baselines + ablations, standard benchmarks, claims mostly supported
+  4 = strong: comprehensive comparisons, informative ablations, meaningful scale, open-source or reproducible details
+  5 = exceptional: thorough, large-scale or very careful, convincing evidence, clearly reproducible
+- clarity (0-5): 0 incomprehensible … 3 clear problem/approach/evaluation … 5 exceptionally crisp.
+
+- score (0-100): overall "should I read this" for ME.
+  score = 10*relevance + 5*novelty + 5*quality
+  Then apply:
+    - if clarity <= 1: subtract 10
+    - if relevance <= 2: cap at 49 (not for me)
+    - if quality <= 1 and relevance >= 4: cap at 70 (relevant topic but weak evidence — not worth my time yet)
+  The result must be an integer 0-100. (For reference: relevance 5 passes with solid novelty+quality; relevance 4 needs excellent novelty+quality; relevance 3 cannot reach {{ score_threshold }}.)
+
+RISK FLAGS (short snake_case strings, include all that apply):
+- "no_full_text" — ONLY when no body excerpt was provided at all
+- "experiments_not_in_excerpt" — the excerpt ends before the experiments, so quality is judged from the claims/contributions (do NOT also add no_ablation/weak_baselines unless the text shows it)
+- "incremental", "unclear_contribution", "domain_mismatch", "weak_baselines", "no_ablation", "small_scale", "no_code", "overclaiming", "benchmark_only", "survey"
+
+OUTPUT FORMAT:
+Return ONLY a JSON object with exactly these keys:
+{
+  "one_line_reason": string,
+  "score": int,
+  "relevance": int,
+  "novelty": int,
+  "quality": int,
+  "clarity": int,
+  "risk_flags": [string, ...],
+  "strengths": [string, ...],
+  "weaknesses": [string, ...]
+}

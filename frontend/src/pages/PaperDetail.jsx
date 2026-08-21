@@ -4,8 +4,9 @@ import axios from 'axios';
 import { ArrowLeft, Calendar, Users, ExternalLink, Star, Building2, Tag, RefreshCw } from 'lucide-react';
 import { format } from 'date-fns';
 import ReactMarkdown from 'react-markdown';
+import ScoreBreakdown from '../components/ScoreBreakdown';
 
-const API_URL = '';
+const API_URL = '/api'; // All backend endpoints live under /api (same origin)
 
 const PaperDetail = () => {
     const { id } = useParams();
@@ -146,8 +147,13 @@ const PaperDetail = () => {
                             <h1 className="text-3xl md:text-4xl font-black text-white leading-tight font-display">
                                 {paper.title}
                             </h1>
-                            {paper.score && (
-                                <div className={`shrink-0 flex items-center gap-2 px-3 py-1.5 rounded-lg text-lg font-bold ${paper.score >= 85 ? 'bg-green-500/20 text-green-400' : 'bg-yellow-500/20 text-yellow-400'}`}>
+                            {paper.score !== null && paper.score !== undefined && (
+                                <div
+                                    className={`shrink-0 flex items-center gap-2 px-3 py-1.5 rounded-lg text-lg font-bold ${paper.score >= 85 ? 'bg-green-500/20 text-green-400' : 'bg-yellow-500/20 text-yellow-400'}`}
+                                    title={paper.user_score !== null && paper.user_score !== undefined
+                                        ? 'User-assigned score'
+                                        : `${paper.score_stage1 !== null && paper.score_stage1 !== undefined ? `Stage 1: ${paper.score_stage1} → ` : ''}final ${paper.score}${paper.score_model ? ` (${paper.score_model})` : ''}`}
+                                >
                                     <Star size={18} fill="currentColor" />
                                     {paper.score}
                                 </div>
@@ -260,10 +266,8 @@ const PaperDetail = () => {
 
                             {paper.score_reason && (
                                 <div className="mt-6 pt-6 border-t border-slate-700/50">
-                                    <h4 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-2">Scoring Logic</h4>
-                                    <p className="text-sm text-slate-400 font-mono bg-slate-950 p-4 rounded-lg overflow-x-auto">
-                                        {paper.score_reason}
-                                    </p>
+                                    <h4 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-3">Scoring</h4>
+                                    <ScoreBreakdown scoreReason={paper.score_reason} userScore={paper.user_score} />
                                 </div>
                             )}
                         </div>

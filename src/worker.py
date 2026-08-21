@@ -1,5 +1,6 @@
 import asyncio
 import json
+from datetime import datetime
 
 from sqlmodel import Session, select
 from src.database import engine
@@ -9,14 +10,26 @@ from src.services.arxiv import ArxivFetcher
 from src.services.llm import LLMService
 from src.services.notifier import get_notifier
 from src.services.pdf_service import pdf_service
+from src.services.settings_service import get_llm_config
+from src.services.usage_service import cost_since
 from src.utils import sanitize_text
 from src.logger import logger
 
-SCORE_THRESHOLD = 85
 CONCURRENCY_LIMIT = 5
 PAPER_SYNC_LIMIT = 500
 
+
+def _score_threshold() -> int:
+    return get_llm_config().score_threshold
+
+
 async def process_paper_score(sem: asyncio.Semaphore, llm: LLMService, paper: Paper):
+    """
+    Two-stage scoring:
+      stage 1 — cheap model, title+abstract, recall-oriented
+      stage 2 — stronger model, abstract + beginning of full text, precision-oriented;
+                runs only when stage-1 score >= stage2_threshold. Final score = stage 2 when it ran.
+    """
     async with sem:
         await logger.log(f"Scoring paper: {paper.id}")
 
@@ -25,18 +38,50 @@ async def process_paper_score(sem: asyncio.Semaphore, llm: LLMService, paper: Pa
              await logger.log(f"  - Skipping AI scoring for {paper.id}, user score present: {paper.user_score}")
              return
 
-        score_data = await llm.score_paper(paper, settings.USER_PROFILE)
-        
-        # Check for important authors
+        cfg = llm.config
+        details = {}
+
+        # ---- Stage 1
+        s1 = await llm.score_paper(paper, settings.USER_PROFILE)
+        if s1 is None:
+            await logger.log(f"  - Stage-1 scoring failed for {paper.id}; leaving as NEW")
+            return
+        final_score = s1.score
+        final_model = cfg.stage1_model
+        details["stage1"] = {"model": cfg.stage1_model, **s1.model_dump()}
+        await logger.log(f"  - Stage 1 ({cfg.stage1_model}): {s1.score}")
+
+        # ---- Stage 2 (conditional)
+        fetched_text = None
+        if s1.score >= cfg.stage2_threshold:
+            # Reuse cached full text if we already have it, else fetch the PDF now
+            # (the text is stored so summarization can reuse it later).
+            with Session(engine) as session:
+                db_paper = session.get(Paper, paper.id)
+                cached_text = db_paper.full_text if db_paper else None
+            text = cached_text
+            if not text and paper.pdf_url:
+                text = await pdf_service.extract_text_from_url(paper.pdf_url)
+                fetched_text = text
+            snippet = text[: settings.STAGE2_TEXT_CHAR_LIMIT] if text else None
+            s2 = await llm.score_paper_stage2(paper, settings.USER_PROFILE, snippet)
+            if s2 is not None:
+                final_score = s2.score
+                final_model = cfg.stage2_model
+                details["stage2"] = {"model": cfg.stage2_model, "had_full_text": bool(text), **s2.model_dump()}
+                await logger.log(f"  - Stage 2 ({cfg.stage2_model}): {s2.score}")
+            else:
+                details["stage2"] = {"model": cfg.stage2_model, "error": "stage-2 scoring failed; kept stage-1 score"}
+                await logger.log(f"  - Stage 2 failed for {paper.id}; keeping stage-1 score {s1.score}")
+
+        # ---- Important-author boost
         is_important_author = False
         try:
             with Session(engine) as session:
-                # Get authors from paper
                 authors = paper.authors_list
                 if authors:
-                    # Check if any is marked important
                     statement = select(Author).where(
-                        Author.name.in_(authors), 
+                        Author.name.in_(authors),
                         Author.is_important == True
                     )
                     important_authors = session.exec(statement).all()
@@ -46,67 +91,75 @@ async def process_paper_score(sem: asyncio.Semaphore, llm: LLMService, paper: Pa
         except Exception as e:
             await logger.log(f"  - Error checking important authors: {e}")
 
-        if is_important_author and score_data.score < 90:
-            await logger.log(f"  - Boosting score from {score_data.score} to 90 due to important author.")
-            score_data.score = 90
+        if is_important_author and final_score < 90:
+            await logger.log(f"  - Boosting score from {final_score} to 90 due to important author.")
+            details["boost"] = {"reason": "important_author", "from": final_score, "to": 90}
+            final_score = 90
 
-        
+        details["final"] = final_score
+        threshold = cfg.score_threshold
+
         with Session(engine) as session:
             db_paper = session.get(Paper, paper.id)
-            if db_paper and score_data:
-                db_paper.score = score_data.score
-                db_paper.score_reason = sanitize_text(score_data.model_dump_json())
-                if score_data.score < SCORE_THRESHOLD:
-                    db_paper.status = "FILTERED"
-                else:
-                    db_paper.status = "SCORED"
+            if db_paper:
+                db_paper.score = final_score
+                db_paper.score_stage1 = s1.score
+                db_paper.score_model = final_model
+                db_paper.score_reason = sanitize_text(json.dumps(details, ensure_ascii=False))
+                if fetched_text and not db_paper.full_text:
+                    db_paper.full_text = sanitize_text(fetched_text)
+                db_paper.status = "FILTERED" if final_score < threshold else "SCORED"
+                db_paper.updated_at = datetime.now()
                 session.add(db_paper)
                 session.commit()
 
 async def process_paper_summary(sem: asyncio.Semaphore, llm: LLMService, paper: Paper):
     async with sem:
         await logger.log(f"Summarizing paper: {paper.id}")
-        
-        # Need to re-fetch paper from DB or just use passed object? Passed object is detached or from session?
-        # Better to fetch full text here.
-        full_text = None
-        if paper.pdf_url:
+
+        # Reuse full text cached by stage-2 scoring if present; otherwise fetch the PDF.
+        with Session(engine) as session:
+            db_paper = session.get(Paper, paper.id)
+            full_text = db_paper.full_text if db_paper else None
+        if not full_text and paper.pdf_url:
             full_text = await pdf_service.extract_text_from_url(paper.pdf_url)
 
         aff_data = None
         if full_text:
-            await logger.log(f"  - Extracted full text for {paper.id}")
+            await logger.log(f"  - Using full text for {paper.id} ({len(full_text)} chars)")
             # Extract affiliations
             aff_data = await llm.extract_affiliations(paper, full_text)
             if aff_data:
                 await logger.log(f"  - Affiliations: {aff_data.main_affiliation}")
             # Summarize with full text
-            summary = await llm.summarize_paper(paper, full_text=full_text)
+            summary = await llm.summarize_paper(paper, full_text=full_text, user_profile=settings.USER_PROFILE)
         else:
             await logger.log(f"  - Full text not available for {paper.id}")
-            summary = await llm.summarize_paper(paper)
-        
+            summary = await llm.summarize_paper(paper, user_profile=settings.USER_PROFILE)
+
         with Session(engine) as session:
             db_paper = session.get(Paper, paper.id)
             if db_paper:
                 if full_text:
                     db_paper.full_text = sanitize_text(full_text)
-                
+
                 if aff_data:
                     db_paper.affiliations = sanitize_text(json.dumps(aff_data.affiliations))
                     db_paper.main_company = sanitize_text(aff_data.main_company)
                     db_paper.main_university = sanitize_text(aff_data.main_university)
                     db_paper.main_affiliation = sanitize_text(aff_data.main_affiliation)
-                
+
                 if summary:
                     db_paper.summary_personalized = sanitize_text(summary)
                     db_paper.status = "SUMMARIZED"
-                
+
+                db_paper.updated_at = datetime.now()
                 session.add(db_paper)
                 session.commit()
 
 async def run_worker():
     await logger.log("Starting worker cycle...")
+    run_started_at = datetime.now()
 
     # 1. Fetch
     fetcher = ArxivFetcher(categories=settings.ARXIV_CATEGORIES)
@@ -129,7 +182,12 @@ async def run_worker():
         return
 
     llm = LLMService()
+    cfg = llm.config
     sem = asyncio.Semaphore(CONCURRENCY_LIMIT)
+    await logger.log(
+        f"Models — stage1: {cfg.stage1_model} | stage2: {cfg.stage2_model} (>= {cfg.stage2_threshold}) | "
+        f"summary: {cfg.summary_model} (>= {cfg.score_threshold})"
+    )
 
     # 2. Score NEW papers
     with Session(engine) as session:
@@ -138,19 +196,23 @@ async def run_worker():
 
     scored_count = len(papers_to_score)
     above_threshold_count = 0
+    stage2_count = 0
 
     if papers_to_score:
         await logger.log(f"Scoring {len(papers_to_score)} papers...")
         await asyncio.gather(*[process_paper_score(sem, llm, p) for p in papers_to_score])
 
-        # Count how many of the just-scored papers cleared the threshold
+        # Count how many of the just-scored papers cleared the thresholds
         scored_ids = [p.id for p in papers_to_score]
         with Session(engine) as session:
-            statement = select(Paper).where(
+            above_threshold_count = len(session.exec(select(Paper).where(
                 Paper.id.in_(scored_ids),
-                Paper.score >= SCORE_THRESHOLD,
-            )
-            above_threshold_count = len(session.exec(statement).all())
+                Paper.score >= cfg.score_threshold,
+            )).all())
+            stage2_count = len(session.exec(select(Paper).where(
+                Paper.id.in_(scored_ids),
+                Paper.score_stage1 >= cfg.stage2_threshold,
+            )).all())
 
     # 3. Summarize SCORED papers (High score)
     with Session(engine) as session:
@@ -171,10 +233,14 @@ async def run_worker():
         return
 
     # Always emit a summary header about today's scoring activity
+    run_cost = cost_since(run_started_at)
+    cost_line = f"   • LLM cost this run: ${run_cost:.3f}\n" if run_cost is not None else ""
     summary_msg = (
         f"📊 Today's scoring\n"
         f"   • Scored: {scored_count} paper(s)\n"
-        f"   • Above threshold (≥{SCORE_THRESHOLD}): {above_threshold_count}\n"
+        f"   • Stage-2 reviewed (≥{cfg.stage2_threshold}): {stage2_count}\n"
+        f"   • Above threshold (≥{cfg.score_threshold}): {above_threshold_count}\n"
+        f"{cost_line}"
     )
     messages = [summary_msg]
 
@@ -225,38 +291,37 @@ async def process_single_paper(paper_id: str, force_rescore: bool = False):
     Process a single paper: score -> (if good) summarize -> notify (if configured)
     """
     await logger.log(f"Processing single paper: {paper_id} (force_rescore={force_rescore})")
-    
+
     # Check if paper exists
     with Session(engine) as session:
         paper = session.get(Paper, paper_id)
-    
+
     if not paper:
         await logger.log(f"Paper {paper_id} not found in DB.")
         return
 
     llm = LLMService()
+    threshold = llm.config.score_threshold
     sem = asyncio.Semaphore(1) # processed singly, so limit doesn't matter much
-    
+
     # 1. Score
-    # Force status to NEW to ensure scoring runs? Or just run it.
-    if force_rescore or paper.status == "NEW" or paper.status == "FILTERED": 
-        # Re-score if needed
+    if force_rescore or paper.status == "NEW" or paper.status == "FILTERED":
         await process_paper_score(sem, llm, paper)
-    
+
     # Reload to check score
     with Session(engine) as session:
         paper = session.get(Paper, paper_id)
-        
+
     if not paper: return
 
     # 2. Summarize
-    if paper.status == "SCORED" or (paper.score and paper.score >= SCORE_THRESHOLD and not paper.summary_personalized):
+    if paper.status == "SCORED" or (paper.score and paper.score >= threshold and not paper.summary_personalized):
         await process_paper_summary(sem, llm, paper)
-        
+
     # Reload
     with Session(engine) as session:
         paper = session.get(Paper, paper_id)
-        
+
     if not paper: return
 
     # 3. Notify
@@ -267,9 +332,9 @@ async def process_single_paper(paper_id: str, force_rescore: bool = False):
             digest += f"📄 *{paper.title}* (Score: {paper.score})\n"
             digest += f"[PDF]({paper.pdf_url})\n"
             digest += f"tl;dr: {paper.summary_personalized[:200]}...\n\n"
-            
+
             success = await notifier.send_message(digest)
-            
+
             if success:
                 with Session(engine) as session:
                     db_p = session.get(Paper, paper.id)

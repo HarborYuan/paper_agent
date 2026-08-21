@@ -4,12 +4,14 @@ from src.models import Paper
 from datetime import datetime
 
 def test_read_main(client: TestClient):
-    response = client.get("/health")
-    assert response.status_code == 200
-    assert "message" in response.json()
+    # root liveness probe and the /api alias both work
+    for path in ("/health", "/api/health"):
+        response = client.get(path)
+        assert response.status_code == 200
+        assert "message" in response.json()
 
 def test_list_papers_empty(client: TestClient):
-    response = client.get("/papers")
+    response = client.get("/api/papers")
     assert response.status_code == 200
     assert response.json() == []
 
@@ -30,7 +32,7 @@ def test_list_papers_with_data(client: TestClient, session: Session):
     session.add(paper)
     session.commit()
     
-    response = client.get("/papers")
+    response = client.get("/api/papers")
     assert response.status_code == 200
     data = response.json()
     assert len(data) == 1
@@ -45,7 +47,7 @@ def test_filter_papers(client: TestClient, session: Session):
     session.add(p2)
     session.commit()
     
-    response = client.get("/papers?status=SCORED")
+    response = client.get("/api/papers?status=SCORED")
     data = response.json()
     assert len(data) == 1
     assert data[0]["id"] == "2"
@@ -60,7 +62,7 @@ def test_trigger_run(client: TestClient):
     from unittest.mock import patch
     
     with patch("src.main.run_worker") as mock_worker:
-        response = client.post("/run")
+        response = client.post("/api/run")
         assert response.status_code == 200
         assert "background" in response.json()["message"]
         # In TestClient, background tasks are just added, we can check they were added if we inspect 'background_tasks' 

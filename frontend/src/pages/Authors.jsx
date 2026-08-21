@@ -4,7 +4,7 @@ import { motion } from 'framer-motion';
 import { Users, BookOpen, ChevronRight, Search, Trophy, Calendar } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
-const API_URL = '';
+const API_URL = '/api'; // All backend endpoints live under /api (same origin)
 
 const TIME_RANGES = [
     { label: '7d', value: 7 },

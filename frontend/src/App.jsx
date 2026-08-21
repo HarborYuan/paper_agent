@@ -14,7 +14,7 @@ import AuthorDetail from './pages/AuthorDetail';
 import SettingsPage from './pages/Settings';
 import LogViewer from './components/LogViewer';
 
-const API_URL = ''; // Relative path since we serve from the same origin in Docker/Production
+const API_URL = '/api'; // All backend endpoints live under /api (same origin)
 
 function AppContent() {
   const [groups, setGroups] = useState([]); // Array of { date: Date, papers: Paper[] }
@@ -34,7 +34,7 @@ function AppContent() {
 
       console.log("Connecting to WebSocket...");
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${protocol}//${window.location.host}/ws/logs`;
+      const wsUrl = `${protocol}//${window.location.host}${API_URL}/ws/logs`;
       const socket = new WebSocket(wsUrl);
       ws.current = socket;
 
