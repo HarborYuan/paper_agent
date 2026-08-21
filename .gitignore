@@ -5,3 +5,5 @@ __pycache__/
 data/
 *.db
 .env
+# local planning notes (not part of the repo)
+/TODO.md

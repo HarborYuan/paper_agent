@@ -5,6 +5,7 @@ import { ArrowLeft, Calendar, Users, ExternalLink, Star, Building2, Tag, Refresh
 import { format } from 'date-fns';
 import ReactMarkdown from 'react-markdown';
 import ScoreBreakdown from '../components/ScoreBreakdown';
+import RelatedPapers from '../components/RelatedPapers';
 
 const API_URL = '/api'; // All backend endpoints live under /api (same origin)
 
@@ -282,6 +283,9 @@ const PaperDetail = () => {
                             {paper.summary_generic}
                         </p>
                     </div>
+
+                    {/* Related papers (embedding neighbours) */}
+                    <RelatedPapers paperId={paper.id} />
                 </article>
             </div>
         </div>

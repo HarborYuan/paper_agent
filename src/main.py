@@ -30,6 +30,8 @@ from src.services.report_service import (
 )
 from src.services.notifier import get_notifier
 from src.models import Report
+from src.services import embedding_service
+from src.services.paper_views import compact_paper
 
 
 
@@ -43,6 +45,11 @@ async def lifespan(app: FastAPI):
         await scheduler_service.start()
     except Exception as e:
         await logger.log(f"DB/Scheduler Init Error: {e}")
+    try:
+        n = embedding_service.index.load()
+        await logger.log(f"Embedding index: {n} vectors ({embedding_service.current_model()})")
+    except Exception as e:
+        await logger.log(f"Embedding index not loaded: {e}")
     try:
         ok = await model_catalog.refresh()
         await logger.log(f"Model catalog: {'loaded ' + str(model_catalog.status()['count']) + ' models' if ok else 'unavailable (' + str(model_catalog.status()['last_error']) + ')'}")
@@ -147,13 +154,20 @@ async def add_paper(request: AddPaperRequest, background_tasks: BackgroundTasks,
     
     return {"message": f"Paper {new_paper.id} added and processing started.", "paper": new_paper}
 
-@api.get("/papers", response_model=List[Paper])
+@api.get("/papers", response_model=None)
 def list_papers(
     status: Optional[str] = None, 
     limit: int = 50, 
     date: Optional[str] = Query(None, description="Filter by date (YYYY-MM-DD)"),
+    ids: Optional[str] = Query(None, description="Comma-separated arXiv ids to fetch (ignores date/status)"),
+    compact: bool = Query(False, description="Small agent-friendly records (no full text / raw JSON)"),
     session: Session = Depends(get_session)
 ):
+    if ids:
+        wanted = [x.strip() for x in ids.split(",") if x.strip()]
+        found = {p.id: p for p in session.exec(select(Paper).where(Paper.id.in_(wanted))).all()}
+        papers = [found[i] for i in wanted if i in found]
+        return [compact_paper(p) for p in papers] if compact else papers
     query = select(Paper)
     
     if date:
@@ -178,17 +192,114 @@ def list_papers(
         query = query.limit(limit)
         
     results = session.exec(query).all()
-    return results
+    return [compact_paper(p) for p in results] if compact else results
 
-@api.get("/papers/search", response_model=List[Paper])
+@api.get("/papers/search", response_model=None)
 def search_papers(
     q: str = Query(..., description="Search by title"),
     limit: int = 50,
+    compact: bool = Query(False, description="Small agent-friendly records"),
     session: Session = Depends(get_session)
 ):
     query = select(Paper).where(Paper.title.icontains(q)).order_by(Paper.score.desc(), Paper.published_at.desc()).limit(limit)
     results = session.exec(query).all()
-    return results
+    return [compact_paper(p) for p in results] if compact else results
+
+class SemanticSearchRequest(SQLModel):
+    query: Optional[str] = None                 # natural-language query (any language)
+    paper_ids: Optional[List[str]] = None       # seed papers: search near their mean vector (excluded from results)
+    days: Optional[int] = None                  # only papers published within the last N days
+    since: Optional[str] = None                 # YYYY-MM-DD (inclusive)
+    until: Optional[str] = None                 # YYYY-MM-DD (exclusive)
+    min_score: Optional[int] = None
+    status: Optional[List[str]] = None          # e.g. ["PUSHED", "SUMMARIZED"]
+    category: Optional[str] = None              # primary category, e.g. "cs.CV"
+    exclude_ids: Optional[List[str]] = None
+    limit: int = 30
+    compact: bool = True
+
+
+def _allowed_ids_for_filters(session: Session, req: SemanticSearchRequest) -> Optional[set]:
+    """Translate filters into the candidate id set (None = no filter)."""
+    conds = []
+    if req.days is not None:
+        conds.append(Paper.published_at >= datetime.now() - timedelta(days=req.days))
+    if req.since:
+        conds.append(Paper.published_at >= datetime.strptime(req.since, "%Y-%m-%d"))
+    if req.until:
+        conds.append(Paper.published_at < datetime.strptime(req.until, "%Y-%m-%d"))
+    if req.min_score is not None:
+        conds.append(Paper.score >= req.min_score)
+    if req.status:
+        conds.append(Paper.status.in_(req.status))
+    if req.category:
+        conds.append(Paper.category_primary == req.category)
+    if not conds:
+        return None
+    q = select(Paper.id)
+    for c in conds:
+        q = q.where(c)
+    return set(session.exec(q).all())
+
+
+async def _semantic_search_impl(req: SemanticSearchRequest, session: Session):
+    if not (req.query and req.query.strip()) and not req.paper_ids:
+        raise HTTPException(status_code=400, detail="Provide `query` text and/or `paper_ids` seeds.")
+    try:
+        allowed = _allowed_ids_for_filters(session, req)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+    if allowed is not None and not allowed:
+        return {"query": req.query, "results": [], "index_size": embedding_service.index.size(), "filters_matched": 0}
+    try:
+        hits = await embedding_service.semantic_search(
+            req.query, k=max(1, min(req.limit, 200)), seed_ids=req.paper_ids,
+            allowed=allowed, exclude=set(req.exclude_ids or []),
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Embedding request failed: {e}")
+    by_id = {p.id: p for p in session.exec(select(Paper).where(Paper.id.in_([h[0] for h in hits]))).all()} if hits else {}
+    results = []
+    for pid, sim in hits:
+        p = by_id.get(pid)
+        if not p:
+            continue
+        if req.compact:
+            results.append(compact_paper(p, similarity=sim))
+        else:
+            d = p.model_dump(); d.pop("full_text", None); d["similarity"] = round(sim, 4)
+            results.append(d)
+    return {"query": req.query, "seed_ids": req.paper_ids, "results": results,
+            "index_size": embedding_service.index.size(),
+            "filters_matched": len(allowed) if allowed is not None else None}
+
+
+@api.get("/papers/semantic-search")
+async def semantic_search_papers(
+    q: str = Query(..., description="Natural-language query (any language)"),
+    limit: int = 30,
+    days: Optional[int] = Query(None, description="Only papers published within the last N days"),
+    min_score: Optional[int] = None,
+    category: Optional[str] = None,
+    compact: bool = Query(False, description="Small agent-friendly records (default full records for the UI)"),
+    session: Session = Depends(get_session),
+):
+    """Semantic search over title+abstract embeddings (one embedding call per query). Returns papers with cosine `similarity`."""
+    if not q.strip():
+        return {"query": q, "results": [], "index_size": embedding_service.index.size()}
+    req = SemanticSearchRequest(query=q, limit=limit, days=days, min_score=min_score, category=category, compact=compact)
+    return await _semantic_search_impl(req, session)
+
+
+@api.post("/papers/semantic-search")
+async def semantic_search_papers_post(req: SemanticSearchRequest, session: Session = Depends(get_session)):
+    """
+    Semantic search for agents: `query` text and/or `paper_ids` seeds (search near their mean vector),
+    with filters (`days` / `since` / `until` / `min_score` / `status` / `category` / `exclude_ids`).
+    Compact records by default.
+    """
+    return await _semantic_search_impl(req, session)
+
 
 @api.get("/papers/start-date")
 def get_start_date(session: Session = Depends(get_session)):
@@ -236,6 +347,19 @@ def get_paper(paper_id: str, session: Session = Depends(get_session)):
     if not paper:
         raise HTTPException(status_code=404, detail="Paper not found")
     return paper
+
+@api.get("/papers/{paper_id}/related")
+def related_papers(paper_id: str, k: int = 8, session: Session = Depends(get_session)):
+    """Nearest neighbours of a paper by embedding. `available=false` if the paper has no vector yet."""
+    if not session.get(Paper, paper_id):
+        raise HTTPException(status_code=404, detail="Paper not found")
+    hits = embedding_service.related(paper_id, k=k)
+    if hits is None:
+        return {"available": False, "results": []}
+    by_id = {p.id: p for p in session.exec(select(Paper).where(Paper.id.in_([h[0] for h in hits]))).all()}
+    results = [compact_paper(by_id[pid], similarity=sim) for pid, sim in hits if pid in by_id]
+    return {"available": True, "results": results}
+
 
 # In-memory store for rate limiting
 RESCORE_LAST_RUN = {}  # date_str -> last_run_timestamp
@@ -592,6 +716,41 @@ async def get_llm_estimate(
     if stage2_threshold is not None: cfg.stage2_threshold = stage2_threshold
     if score_threshold is not None: cfg.score_threshold = score_threshold
     return estimate_cost(session, cfg)
+
+# ---------------------------------------------------------------------------
+# Embeddings admin
+# ---------------------------------------------------------------------------
+@api.get("/embeddings/status")
+def embeddings_status():
+    """Coverage of the current embedding model, index size, backfill progress."""
+    return embedding_service.status()
+
+
+@api.post("/embeddings/backfill")
+async def embeddings_backfill(background_tasks: BackgroundTasks):
+    """Embed every paper that has no vector for the current model (background; idempotent)."""
+    st = embedding_service.status()
+    if st["backfill"]["running"]:
+        return {"message": "Backfill already running.", **st}
+    if not st["key_configured"]:
+        raise HTTPException(status_code=400, detail="No LLM API key configured.")
+    background_tasks.add_task(embedding_service.backfill, logger.log)
+    return {"message": f"Backfill started for {st['missing']} paper(s).", **st}
+
+
+@api.post("/embeddings/reload")
+def embeddings_reload():
+    """Force-reload the in-memory index from the DB."""
+    n = embedding_service.index.load(force=True)
+    return {"index_size": n, "model": embedding_service.current_model()}
+
+
+@api.get("/embeddings/models")
+async def embeddings_models(refresh: bool = False):
+    """Embedding models offered by the provider (from the catalog's /embeddings/models list)."""
+    await model_catalog.refresh(force=refresh)
+    return {"models": [m.to_dict() for m in model_catalog.list(kind="embedding")], "catalog": model_catalog.status()}
+
 
 # ---------------------------------------------------------------------------
 # Reports (daily / weekly / monthly trend summaries)

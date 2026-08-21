@@ -42,7 +42,7 @@ const MATCH_KEYS = Object.keys(LOGO_MAP)
         original: key
     }));
 
-const PaperCard = ({ paper, onRefreshed }) => {
+const PaperCard = ({ paper, onRefreshed, similarity }) => {
 
     const [refreshing, setRefreshing] = useState(false);
     const {
@@ -205,6 +205,11 @@ const PaperCard = ({ paper, onRefreshed }) => {
                     </h3>
                     {/* Score (Editable) */}
                     <div className="shrink-0 flex items-center gap-1" onClick={e => e.stopPropagation()}>
+                        {similarity !== undefined && similarity !== null && (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-500/15 text-purple-300 border border-purple-500/30" title="Embedding similarity to your query">
+                                {(similarity * 100).toFixed(0)}% match
+                            </span>
+                        )}
                         {isEditingScore ? (
                             <div className="flex items-center gap-1 bg-slate-700 rounded px-1 py-0.5">
                                 <input

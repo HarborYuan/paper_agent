@@ -13,6 +13,13 @@ SELECTED PAPERS (sorted by score, highest first; "reason" is the agent's one-lin
 {% if p.tldr %}  tldr: {{ p.tldr }}
 {% endif %}{% endfor %}
 
+{% if clusters %}
+PRE-COMPUTED TOPIC CLUSTERS (by embedding similarity of title+abstract; use them as the starting point for the topic section — you may merge, split or rename them, but keep each cited paper in a theme that fits it):
+{% for c in clusters %}
+- Cluster {{ loop.index }}: {% for p in c %}[{{ p.id }}] {{ p.title }}{% if not loop.last %}; {% endif %}{% endfor %}
+{% endfor %}
+{% endif %}
+
 {% if language == 'CN' %}
 Write the report in Chinese (keep paper titles, model/method names and arXiv ids in English). Keep the Markdown headings exactly as given below (English headings, Chinese content).
 {% else %}

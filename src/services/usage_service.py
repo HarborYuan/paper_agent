@@ -15,7 +15,7 @@ from sqlmodel import Session, select
 from src.models import LLMUsage, Paper
 from src.services.model_catalog import model_catalog
 from src.services.settings_service import (
-    TASK_STAGE1, TASK_STAGE2, TASK_SUMMARY, TASK_AFFILIATION, TASK_REPORT, ALL_TASKS, LLMConfig,
+    TASK_STAGE1, TASK_STAGE2, TASK_SUMMARY, TASK_AFFILIATION, TASK_REPORT, TASK_EMBED, ALL_TASKS, LLMConfig,
 )
 
 # Priors for average tokens per call when there is no history yet (prompt, completion)
@@ -25,6 +25,7 @@ TOKEN_PRIORS: Dict[str, tuple] = {
     TASK_SUMMARY: (22000, 1300),
     TASK_AFFILIATION: (1300, 80),
     TASK_REPORT: (4500, 900),
+    TASK_EMBED: (20000, 0),     # one batch of ~64 title+abstract texts
 }
 # Priors for calls/day when there is no history yet
 VOLUME_PRIORS: Dict[str, float] = {
@@ -33,6 +34,7 @@ VOLUME_PRIORS: Dict[str, float] = {
     TASK_SUMMARY: 4.0,
     TASK_AFFILIATION: 4.0,
     TASK_REPORT: 1.2,   # daily + weekly/7 + monthly/30
+    TASK_EMBED: 2.5,    # ~130 papers/day in batches of 64, plus search queries
 }
 MIN_SAMPLES_FOR_AVG = 5
 
@@ -166,6 +168,7 @@ def _daily_volumes(session: Session, cfg: LLMConfig, days: int = 14) -> Dict[str
         TASK_SUMMARY: {"calls_per_day": round(summary_per_day, 1), "source": src},
         TASK_AFFILIATION: {"calls_per_day": round(summary_per_day, 1), "source": src},
         TASK_REPORT: {"calls_per_day": VOLUME_PRIORS[TASK_REPORT], "source": "schedule"},
+        TASK_EMBED: {"calls_per_day": round(max(per_day / 64.0, 0.1) + 1, 1) if total and active_days else VOLUME_PRIORS[TASK_EMBED], "source": src},
         "_meta": {"window_days": days, "papers": int(total), "scored": int(scored), "active_days": int(active_days)},
     }
 

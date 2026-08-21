@@ -11,6 +11,7 @@ const TASK_META = {
     summarize: { label: 'Summary', hint: 'Papers above the score threshold: full-text structured summary.' },
     affiliation: { label: 'Affiliation', hint: 'Header parsing for summarized papers (uses the Stage 1 model).' },
     report: { label: 'Reports', hint: 'Daily / weekly / monthly trend reports written from the selected papers + computed stats (≈1.2 calls/day).' },
+    embed: { label: 'Embeddings', hint: 'Title+abstract vectors for semantic search, related papers and report clustering (batches of 64 + search queries).' },
 };
 
 const fmtUSD = (v, digits = 4) => (v === null || v === undefined || Number.isNaN(v)) ? '—' : `$${Number(v).toFixed(digits)}`;
@@ -143,6 +144,22 @@ export default function Settings() {
     const [profileSaving, setProfileSaving] = useState(false);
     const [profileMsg, setProfileMsg] = useState(null);
 
+    // embeddings coverage / backfill
+    const [embStatus, setEmbStatus] = useState(null);
+    const [embBusy, setEmbBusy] = useState(false);
+    const loadEmb = useCallback(async () => {
+        try { const res = await axios.get(`${API_URL}/embeddings/status`); setEmbStatus(res.data); } catch (e) { console.error(e); }
+    }, []);
+    const startBackfill = async () => {
+        setEmbBusy(true);
+        try { const res = await axios.post(`${API_URL}/embeddings/backfill`); setEmbStatus(res.data); } catch (e) { alert(e.response?.data?.detail || 'Backfill failed'); } finally { setEmbBusy(false); }
+    };
+    useEffect(() => {
+        if (!embStatus?.backfill?.running) return;
+        const t = setInterval(loadEmb, 3000);
+        return () => clearInterval(t);
+    }, [embStatus?.backfill?.running, loadEmb]);
+
     const loadAllSettings = useCallback(async () => {
         try {
             const res = await axios.get(`${API_URL}/settings`);
@@ -192,7 +209,7 @@ export default function Settings() {
         }
     }, []);
 
-    useEffect(() => { loadAll(); loadUsage(); loadAllSettings(); }, [loadAll, loadUsage, loadAllSettings]);
+    useEffect(() => { loadAll(); loadUsage(); loadAllSettings(); loadEmb(); }, [loadAll, loadUsage, loadAllSettings, loadEmb]);
 
     // Debounced cost estimate whenever the draft changes
     useEffect(() => {
@@ -529,6 +546,30 @@ export default function Settings() {
                             )}
                         </Card>
 
+                        {/* Embeddings */}
+                        <Card icon={Search} title="Embeddings"
+                            right={<button onClick={loadEmb} className="flex items-center gap-1 text-xs px-2 py-1 rounded bg-slate-700/60 hover:bg-slate-600 text-slate-300"><RefreshCw size={12} /> refresh</button>}
+                        >
+                            {!embStatus ? <p className="text-sm text-slate-500">Loading…</p> : (
+                                <>
+                                    <p className="text-xs text-slate-500 mb-4">Vectors of title+abstract power <b>Semantic</b> search on the main page, <b>Related papers</b> on each paper page and the topic clusters in reports. New papers are embedded during each run; use Backfill for the history (≈ $0.02 per 1k papers with voyage-4). Model and dimensions are set in Configuration → Retrieval above.</p>
+                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                                        <Stat label="model" value={<span className="text-sm">{embStatus.model}</span>} sub={`${embStatus.dim} dims`} />
+                                        <Stat label="embedded" value={fmtNum(embStatus.embedded)} sub={`of ${fmtNum(embStatus.total_papers)} papers`} accent />
+                                        <Stat label="missing" value={fmtNum(embStatus.missing)} sub={embStatus.stale_other_model ? `${fmtNum(embStatus.stale_other_model)} from another model` : null} />
+                                        <Stat label="index in memory" value={fmtNum(embStatus.index_size)} sub={embStatus.index_loaded_at ? new Date(embStatus.index_loaded_at).toLocaleTimeString() : null} />
+                                    </div>
+                                    <div className="flex items-center gap-3">
+                                        <button onClick={startBackfill} disabled={embBusy || embStatus.backfill?.running || !embStatus.missing} className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold transition-colors ${embBusy || embStatus.backfill?.running || !embStatus.missing ? 'bg-slate-700 text-slate-500 cursor-not-allowed' : 'bg-cyan-500 hover:bg-cyan-400 text-slate-900'}`}>
+                                            <RefreshCw size={16} className={embStatus.backfill?.running ? 'animate-spin' : ''} /> {embStatus.backfill?.running ? `Backfilling ${fmtNum(embStatus.backfill.done)} / ${fmtNum(embStatus.backfill.total)}…` : (embStatus.missing ? `Backfill ${fmtNum(embStatus.missing)} papers` : 'All papers embedded')}
+                                        </button>
+                                        {embStatus.backfill?.error && <span className="text-sm text-red-400">{embStatus.backfill.error}</span>}
+                                        {!embStatus.key_configured && <span className="text-sm text-red-400">No API key configured.</span>}
+                                    </div>
+                                </>
+                            )}
+                        </Card>
+
                         {/* Profile */}
                         <Card icon={User} title="User Profile Prompt"
                             right={<span className="text-xs text-slate-500">{(profileDraft || '').length} chars</span>}
@@ -564,6 +605,7 @@ const CONFIG_GROUPS = [
     { key: 'pipeline', label: 'Pipeline', icon: Cpu },
     { key: 'schedule', label: 'Schedule', icon: Clock },
     { key: 'reports', label: 'Reports', icon: Activity },
+    { key: 'retrieval', label: 'Retrieval (embeddings)', icon: Search },
     { key: 'notification', label: 'Notification', icon: Bell },
     { key: 'system', label: 'System (read-only)', icon: Database },
 ];

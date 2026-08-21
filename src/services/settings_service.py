@@ -20,7 +20,8 @@ TASK_STAGE2 = "score_stage2"
 TASK_SUMMARY = "summarize"
 TASK_AFFILIATION = "affiliation"
 TASK_REPORT = "report"
-ALL_TASKS = [TASK_STAGE1, TASK_STAGE2, TASK_SUMMARY, TASK_AFFILIATION, TASK_REPORT]
+TASK_EMBED = "embed"
+ALL_TASKS = [TASK_STAGE1, TASK_STAGE2, TASK_SUMMARY, TASK_AFFILIATION, TASK_REPORT, TASK_EMBED]
 
 
 # ---------------------------------------------------------------------------
@@ -61,6 +62,11 @@ SCHEMA: List[Field] = [
     Field("SCORE_THRESHOLD", "models", "int", "Score threshold", "", min=0, max=100, owner="models"),
     Field("STAGE2_TEXT_CHAR_LIMIT", "pipeline", "int", "Stage-2 text limit (chars)",
           "How much of the PDF text the stage-2 reviewer sees.", min=1000, max=200000),
+    # Retrieval
+    Field("EMBEDDING_MODEL", "retrieval", "str", "Embedding model",
+          "Used for semantic search, related papers and topic clustering. Changing it makes existing vectors stale — run Backfill afterwards."),
+    Field("EMBEDDING_DIM", "retrieval", "int", "Embedding dimensions",
+          "0 = model native size. Matryoshka models (voyage-4, text-embedding-3-*) accept 256 / 512 / 1024.", min=0, max=4096),
     # Reports
     Field("LLM_MODEL_REPORT", "models", "str", "Report model", "", owner="models"),
     Field("REPORT_DAILY_ENABLED", "reports", "bool", "Daily report", "After each run: a short trend note on the papers pushed in that run (sent with the digest)."),
@@ -255,6 +261,8 @@ class LLMConfig:
             return self.summary_model
         if task == TASK_REPORT:
             return self.report_model
+        if task == TASK_EMBED:
+            return settings.EMBEDDING_MODEL
         # stage-1 screening and affiliation extraction both use the cheap model
         return self.stage1_model
 

@@ -20,6 +20,7 @@ CATALOG_TTL_SECONDS = 6 * 3600
 # The catalog (ids + list prices) always comes from OpenRouter's public endpoint — it needs no key
 # and is the only source with pricing. For non-OpenRouter providers it is used for pricing only.
 OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
+OPENROUTER_EMBEDDING_MODELS_URL = "https://openrouter.ai/api/v1/embeddings/models"
 
 # A small curated shortlist surfaced at the top of the picker (only those present in the catalog).
 RECOMMENDED_IDS = [
@@ -45,6 +46,7 @@ class ModelInfo:
     context_length: Optional[int]
     supports_json: bool
     recommended: bool = False
+    kind: str = "chat"              # chat | embedding
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -71,11 +73,33 @@ class ModelCatalog:
                 resp = await client.get(self.models_url)
                 resp.raise_for_status()
                 data = resp.json().get("data", [])
+                # Embedding models live in a separate list (may need auth on some providers; optional)
+                emb_data = []
+                try:
+                    from src.config import settings as _settings
+                    headers = {"Authorization": f"Bearer {_settings.llm_api_key}"} if _settings.llm_api_key else {}
+                    r2 = await client.get(OPENROUTER_EMBEDDING_MODELS_URL, headers=headers)
+                    if r2.status_code < 400:
+                        emb_data = r2.json().get("data", [])
+                except Exception:
+                    emb_data = []
         except Exception as e:
             self._last_error = str(e)
             return False
 
         parsed: Dict[str, ModelInfo] = {}
+        for m in emb_data:
+            mid = m.get("id")
+            if not mid:
+                continue
+            pricing = m.get("pricing") or {}
+            try:
+                p_in = float(pricing.get("prompt") or 0) * 1_000_000
+            except (TypeError, ValueError):
+                p_in = 0.0
+            parsed[mid] = ModelInfo(id=mid, name=m.get("name") or mid, prompt_price_per_m=round(p_in, 4),
+                                    completion_price_per_m=0.0, context_length=m.get("context_length"),
+                                    supports_json=False, recommended=False, kind="embedding")
         for m in data:
             mid = m.get("id")
             if not mid:
@@ -129,8 +153,8 @@ class ModelCatalog:
             return None
         return (prompt_tokens * info.prompt_price_per_m + completion_tokens * info.completion_price_per_m) / 1_000_000
 
-    def list(self, q: Optional[str] = None, limit: Optional[int] = None) -> List[ModelInfo]:
-        items = list(self._models.values())
+    def list(self, q: Optional[str] = None, limit: Optional[int] = None, kind: Optional[str] = "chat") -> List[ModelInfo]:
+        items = [m for m in self._models.values() if kind is None or m.kind == kind]
         if q:
             terms = [t for t in re.split(r"\s+", q.strip().lower()) if t]
             items = [m for m in items if all(t in m.id.lower() or t in m.name.lower() for t in terms)]
@@ -140,7 +164,8 @@ class ModelCatalog:
 
     def status(self) -> dict:
         return {
-            "count": len(self._models),
+            "count": sum(1 for m in self._models.values() if m.kind == "chat"),
+            "embedding_count": sum(1 for m in self._models.values() if m.kind == "embedding"),
             "fetched_at": self._fetched_at or None,
             "fresh": self._is_fresh(),
             "last_error": self._last_error,

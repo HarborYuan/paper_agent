@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Optional, List
-from sqlmodel import SQLModel, Field
+from sqlmodel import SQLModel, Field, Column, LargeBinary
 import json
 
 class Paper(SQLModel, table=True):
@@ -99,3 +99,16 @@ class Report(SQLModel, table=True):
     pushed_at: Optional[datetime] = None
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
+
+
+class PaperEmbedding(SQLModel, table=True):
+    """
+    One embedding vector per paper (title + abstract), stored as little-endian float32 bytes.
+    `model` / `dim` are recorded so a model switch is detectable (rows of other models are ignored
+    by the in-memory index and re-embedded by the backfill task).
+    """
+    paper_id: str = Field(primary_key=True)
+    model: str = Field(index=True)
+    dim: int
+    vector: bytes = Field(sa_column=Column(LargeBinary, nullable=False))
+    created_at: datetime = Field(default_factory=datetime.now)

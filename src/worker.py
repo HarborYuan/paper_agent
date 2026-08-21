@@ -13,6 +13,7 @@ from src.services.pdf_service import pdf_service
 from src.services.settings_service import get_llm_config
 from src.services.usage_service import cost_since
 from src.services.report_service import run_scheduled_reports, report_to_lark, mark_pushed
+from src.services.embedding_service import embed_new_papers
 from src.utils import sanitize_text
 from src.logger import logger
 
@@ -168,6 +169,14 @@ async def run_worker():
     fetched_papers = await asyncio.to_thread(fetcher.fetch_papers, max_results=PAPER_SYNC_LIMIT)
     new_papers = fetcher.filter_new_papers(fetched_papers)
     fetcher.save_papers(new_papers)
+
+    # 1b. Embed the new papers (semantic search / related / clustering). Non-fatal.
+    if new_papers:
+        try:
+            n = await embed_new_papers([p.id for p in new_papers], log=logger.log)
+            await logger.log(f"Embedded {n} new paper(s).")
+        except Exception as e:
+            await logger.log(f"Embedding skipped: {e}")
 
     notifier = get_notifier()
 

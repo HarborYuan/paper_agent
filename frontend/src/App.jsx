@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import axios from 'axios';
 import { format, subDays, isToday, isYesterday } from 'date-fns';
 import Masonry from 'react-masonry-css';
-import { RefreshCw, Zap, Plus, X, Terminal, Users, Settings, Search, Newspaper } from 'lucide-react';
+import { RefreshCw, Zap, Plus, X, Terminal, Users, Settings, Search, Newspaper, Sparkles } from 'lucide-react';
 import { useInView } from 'react-intersection-observer';
 import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
 
@@ -91,6 +91,9 @@ function AppContent() {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
+  const [searchMode, setSearchMode] = useState(() => localStorage.getItem('searchMode') || 'title'); // 'title' | 'semantic'
+  const [searchError, setSearchError] = useState(null);
+  useEffect(() => { localStorage.setItem('searchMode', searchMode); }, [searchMode]);
 
   // Debounced Search Effect
   useEffect(() => {
@@ -102,17 +105,25 @@ function AppContent() {
         return;
       }
       setIsSearching(true);
+      setSearchError(null);
       try {
-        const res = await axios.get(`${API_URL}/papers/search`, { params: { q } });
-        setSearchResults(res.data);
+        if (searchMode === 'semantic') {
+          const res = await axios.get(`${API_URL}/papers/semantic-search`, { params: { q, limit: 30 } });
+          setSearchResults(res.data.results || []);
+          if (!res.data.index_size) setSearchError('No embeddings yet — run Backfill in Settings → Embeddings.');
+        } else {
+          const res = await axios.get(`${API_URL}/papers/search`, { params: { q } });
+          setSearchResults(res.data);
+        }
       } catch (err) {
         console.error("Failed to search", err);
+        setSearchError(err.response?.data?.detail || 'Search failed');
       } finally {
         setIsSearching(false);
       }
-    }, 400);
+    }, searchMode === 'semantic' ? 600 : 400);
     return () => clearTimeout(handler);
-  }, [searchQuery]);
+  }, [searchQuery, searchMode]);
 
   // Intersection observer for infinite scroll
   const { ref: observerRef, inView } = useInView({
@@ -403,11 +414,19 @@ function AppContent() {
           <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" size={20} />
           <input
             type="text"
-            placeholder="Search titles..."
+            placeholder={searchMode === 'semantic' ? "Describe what you're looking for (e.g. discrete visual tokenizer for unified understanding and generation)..." : "Search titles..."}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full bg-slate-900 border border-slate-700 rounded-xl pl-12 pr-4 py-3 text-base text-white focus:outline-none focus:border-cyan-500 transition-all shadow-sm focus:ring-1 focus:ring-cyan-500"
+            className="w-full bg-slate-900 border border-slate-700 rounded-xl pl-12 pr-44 py-3 text-base text-white focus:outline-none focus:border-cyan-500 transition-all shadow-sm focus:ring-1 focus:ring-cyan-500"
           />
+          <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1 bg-slate-800 rounded-lg p-1" title="Title: substring match on titles. Semantic: embedding similarity on title+abstract (needs embeddings).">
+            {[['title', 'Title'], ['semantic', 'Semantic']].map(([m, label]) => (
+              <button key={m} type="button" onClick={() => setSearchMode(m)}
+                className={`px-3 py-1 rounded-md text-xs font-bold transition-colors ${searchMode === m ? 'bg-cyan-500 text-slate-900' : 'text-slate-400 hover:text-white'}`}>
+                {m === 'semantic' ? <span className="flex items-center gap-1"><Sparkles size={12} /> {label}</span> : label}
+              </button>
+            ))}
+          </div>
         </div>
       </header>
 
@@ -472,7 +491,8 @@ function AppContent() {
           <section>
             <div className="mb-6 pb-2 border-b border-slate-800 flex items-center justify-between sticky top-0 bg-[#0f172a]/90 backdrop-blur-md z-10 pt-4">
               <h2 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-cyan-400 to-blue-500">
-                {isSearching ? "Searching..." : `Search Results (${searchResults.length})`}
+                {isSearching ? (searchMode === 'semantic' ? "Searching semantically..." : "Searching...") : `${searchMode === 'semantic' ? 'Semantic matches' : 'Search Results'} (${searchResults.length})`}
+                {searchError && <span className="ml-3 text-sm font-normal text-yellow-400">{searchError}</span>}
               </h2>
             </div>
             {searchResults.length > 0 ? (
@@ -482,7 +502,7 @@ function AppContent() {
                 columnClassName="pl-6 bg-clip-padding space-y-6"
               >
                 {searchResults.map(paper => (
-                  <PaperCard key={paper.id} paper={paper} onRefreshed={handlePaperRefreshed} />
+                  <PaperCard key={paper.id} paper={paper} similarity={paper.similarity} onRefreshed={handlePaperRefreshed} />
                 ))}
               </Masonry>
             ) : (

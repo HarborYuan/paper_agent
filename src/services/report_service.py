@@ -128,8 +128,20 @@ def compute_stats(session: Session, kind: str, start: datetime, end: datetime,
     except Exception:
         cost = None
 
+    # Embedding-based topic clusters (only when enough papers have vectors)
+    clusters: List[List[str]] = []
+    try:
+        from src.services.embedding_service import cluster as embed_cluster
+        if len(papers) >= 4:
+            clusters, _missing = embed_cluster([p.id for p in papers])
+            if len(clusters) <= 1:
+                clusters = []
+    except Exception as e:
+        print(f"  - clustering skipped: {e}")
+
     stats = {
         "period": {"kind": kind, "start": start.date().isoformat(), "end_exclusive": end.date().isoformat()},
+        "clusters": clusters,
         "selected": len(papers),
         "fetched": int(fetched),
         "stage2_reviewed": int(stage2),
@@ -173,12 +185,19 @@ def _paper_view(p: Paper) -> Dict[str, Any]:
 
 def build_prompt(kind: str, label: str, stats: Dict[str, Any], papers: List[Paper]) -> str:
     cfg = get_llm_config()
+    title_of = {p.id: p.title for p in papers}
+    cluster_views = [
+        [{"id": pid, "title": title_of.get(pid, pid)} for pid in c]
+        for c in (stats.get("clusters") or [])
+    ]
+    stats_for_prompt = {k: v for k, v in stats.items() if k != "clusters"}
     return prompt_service.render_prompt(
         "report.jinja2",
         kind=kind, period_label=label, score_threshold=cfg.score_threshold,
         user_profile=settings.USER_PROFILE, language=settings.SUMMARY_LANGUAGE,
-        stats_json=json.dumps(stats, ensure_ascii=False, indent=1),
+        stats_json=json.dumps(stats_for_prompt, ensure_ascii=False, indent=1),
         papers=[_paper_view(p) for p in papers],
+        clusters=cluster_views,
     )
 
 

@@ -1,7 +1,7 @@
 [project]
 name = "paper-agent"
-version = "0.5.0"
-description = "Report Update"
+version = "0.6.0"
+description = "Retrieval Update"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
@@ -17,6 +17,7 @@ dependencies = [
     "uvicorn>=0.40.0",
     "websockets>=16.0",
     "apscheduler>=3.10.4",
+    "numpy>=2.5.2",
 ]
 
 [dependency-groups]

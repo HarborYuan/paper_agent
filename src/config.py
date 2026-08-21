@@ -21,6 +21,12 @@ class Settings(BaseSettings):
     SCORE_THRESHOLD: int = 85         # final score needed to summarize + notify
     STAGE2_TEXT_CHAR_LIMIT: int = 8000  # chars of full text shown to the stage-2 reviewer
 
+    # Embeddings (semantic search / related papers / topic clustering). Served through the same
+    # OpenAI-compatible /embeddings endpoint (OpenRouter lists them under /embeddings/models).
+    EMBEDDING_MODEL: str = "voyageai/voyage-4"
+    EMBEDDING_DIM: int = 512          # 0 = model's native size; Matryoshka models accept 256/512/1024
+    EMBEDDING_BATCH_SIZE: int = 64
+
     # Reports (LLM-written trend summaries over the selected papers; pushed after the daily digest)
     LLM_MODEL_REPORT: str = "anthropic/claude-sonnet-5"
     REPORT_DAILY_ENABLED: bool = True      # one per run, covering the papers pushed in that run

@@ -60,6 +60,7 @@ FAKE_MODELS = {
     "openai/gpt-4o-mini": ModelInfo("openai/gpt-4o-mini", "GPT-4o-mini", 0.15, 0.60, 128000, True, True),
     "anthropic/claude-sonnet-5": ModelInfo("anthropic/claude-sonnet-5", "Claude Sonnet 5", 2.0, 10.0, 1000000, True, True),
     "vendor/cheap": ModelInfo("vendor/cheap", "Cheap", 0.05, 0.10, 32000, False, False),
+    "voyageai/voyage-4": ModelInfo("voyageai/voyage-4", "Voyage 4", 0.06, 0.0, 32000, False, False, kind="embedding"),
 }
 
 
