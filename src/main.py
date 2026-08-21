@@ -32,6 +32,7 @@ from src.services.notifier import get_notifier
 from src.models import Report
 from src.services import embedding_service
 from src.services.paper_views import compact_paper
+from src.services import author_index as author_index_service
 
 
 
@@ -204,6 +205,29 @@ def search_papers(
     query = select(Paper).where(Paper.title.icontains(q)).order_by(Paper.score.desc(), Paper.published_at.desc()).limit(limit)
     results = session.exec(query).all()
     return [compact_paper(p) for p in results] if compact else results
+
+@api.get("/papers/recent")
+def recent_papers(
+    days: int = Query(7, description="Papers published within the last N days"),
+    min_score: Optional[int] = Query(None, description="Minimum (final) score, e.g. 85 for the digest set"),
+    status: Optional[str] = Query(None, description="Comma-separated statuses, e.g. PUSHED,SUMMARIZED"),
+    category: Optional[str] = None,
+    limit: int = 100,
+    compact: bool = True,
+    session: Session = Depends(get_session),
+):
+    """Recent papers (newest first; ties by score) with optional score/status/category filters. Compact by default."""
+    q = select(Paper).where(Paper.published_at >= datetime.now() - timedelta(days=days))
+    if min_score is not None:
+        q = q.where(Paper.score >= min_score)
+    if status:
+        q = q.where(Paper.status.in_([x.strip() for x in status.split(",") if x.strip()]))
+    if category:
+        q = q.where(Paper.category_primary == category)
+    q = q.order_by(Paper.published_at.desc(), Paper.score.desc()).limit(max(1, min(limit, 1000)))
+    papers = session.exec(q).all()
+    return [compact_paper(p) for p in papers] if compact else papers
+
 
 class SemanticSearchRequest(SQLModel):
     query: Optional[str] = None                 # natural-language query (any language)
@@ -490,6 +514,73 @@ class AuthorUpdate(SQLModel):
     website: Optional[str] = None
     affiliation: Optional[str] = None
     is_important: Optional[bool] = None
+
+
+class AuthorLookupRequest(SQLModel):
+    names: List[str]
+    days: Optional[int] = None
+    min_score: Optional[int] = None
+    limit_per_author: int = 20
+    mark_important: bool = False
+
+
+class AuthorBulkItem(SQLModel):
+    name: str
+    is_important: Optional[bool] = None
+    bio: Optional[str] = None
+    website: Optional[str] = None
+    affiliation: Optional[str] = None
+
+
+class AuthorBulkRequest(SQLModel):
+    authors: List[AuthorBulkItem]
+
+
+@api.post("/authors/lookup")
+def lookup_authors(req: AuthorLookupRequest, session: Session = Depends(get_session)):
+    """
+    Batch "people of interest" lookup. Each name is matched fuzzily against every author string seen on
+    any paper (case/accents/punctuation folded, "Last, First" and swapped token order, then first-initial+last
+    name — the latter may be ambiguous and is flagged). Returns matched variants and their papers
+    (compact; optional `days` / `min_score`). `mark_important=true` flags unambiguous matches for the score boost.
+    """
+    names = [n.strip() for n in (req.names or []) if n and n.strip()]
+    if not names:
+        raise HTTPException(status_code=400, detail="Provide at least one name.")
+    if len(names) > 200:
+        raise HTTPException(status_code=400, detail="At most 200 names per request.")
+    results = author_index_service.lookup(
+        session, names, days=req.days, min_score=req.min_score,
+        limit_per_author=max(0, min(req.limit_per_author, 200)), mark_important=req.mark_important,
+    )
+    return {"results": results, "index_authors": len(author_index_service.author_index.counts)}
+
+
+@api.post("/authors/bulk")
+def bulk_update_authors(req: AuthorBulkRequest, session: Session = Depends(get_session)):
+    """Upsert many authors at once (is_important / bio / website / affiliation). Creates missing authors."""
+    updated = []
+    for item in req.authors:
+        name = item.name.strip()
+        if not name:
+            continue
+        row = session.get(Author, name) or Author(name=name)
+        for f in ("is_important", "bio", "website", "affiliation"):
+            v = getattr(item, f)
+            if v is not None:
+                setattr(row, f, v)
+        row.updated_at = datetime.now()
+        session.add(row)
+        updated.append(name)
+    session.commit()
+    return {"updated": updated, "count": len(updated)}
+
+
+@api.post("/authors/reindex")
+def reindex_authors():
+    """Rebuild the fuzzy author index (it also refreshes itself hourly)."""
+    n = author_index_service.author_index.build()
+    return {"authors": n}
 
 @api.patch("/authors/{author_name}")
 async def update_author(author_name: str, update_data: AuthorUpdate, session: Session = Depends(get_session)):

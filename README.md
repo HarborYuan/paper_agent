@@ -5,7 +5,7 @@
   </p>
   <p align="center">
     <a href="https://github.com/HarborYuan/paper_agent/actions/workflows/docker-publish.yml"><img src="https://github.com/HarborYuan/paper_agent/actions/workflows/docker-publish.yml/badge.svg" alt="Docker Build"></a>
-    <img src="https://img.shields.io/badge/version-0.6.0-cyan" alt="Version">
+    <img src="https://img.shields.io/badge/version-1.0.0-cyan" alt="Version">
     <img src="https://img.shields.io/badge/python-3.13+-blue?logo=python&logoColor=white" alt="Python">
     <img src="https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white" alt="FastAPI">
     <img src="https://img.shields.io/badge/React-61DAFB?logo=react&logoColor=black" alt="React">
@@ -24,6 +24,7 @@
 | ⚙️ **Everything editable in the UI** | All `.env` keys (provider keys, models, thresholds, categories, schedule, profile, Lark webhook) edited from Settings, written back to the env file and hot-applied — secrets never leave the server |
 | 💸 **Cost tracking & estimates** | Real spend per call (from provider usage), today / 7d / 30d totals, and a live per-day / per-month estimate for any model selection |
 | 📝 **Smart Summaries** | Generates personalized markdown summaries with TL;DR, contributions, methodology |
+| 🤝 **MCP server for agents** | `mcp_server/` exposes the instance to Claude Code & co.: semantic search, recent papers, people-of-interest lookup (fuzzy names), paper details / full text, reports, and write-back of scores and important people |
 | 🔎 **Semantic search & related papers** | Title+abstract embeddings (voyage-4 via OpenRouter, 512-d): describe what you want instead of guessing title words; every paper page lists its nearest neighbours; reports cluster papers by embedding before the LLM writes the topic section |
 | 📰 **Daily / Weekly / Monthly Reports** | LLM-written trend reports over the selected papers — topic clusters, institution counts vs. previous period, must-read top 5, signals — stored in the app and pushed to Lark right after the digest |
 | 📬 **Notifications** | Pushes daily digest to Lark (飞书) via webhook |
@@ -41,6 +42,7 @@
 
 | Version | Name | Highlights |
 |---------|------|------------|
+| **1.0.0** | *Agent Update* | MCP server (`paper-agent-mcp`, 13 tools), agent endpoints: `GET /api/papers/recent`, fuzzy batch `POST /api/authors/lookup` (people of interest), `POST /api/authors/bulk`, `POST /api/authors/reindex` |
 | **0.6.0** | *Retrieval Update* | Paper embeddings (OpenRouter `/embeddings`, default `voyageai/voyage-4` @512), semantic search toggle on the main page, Related papers on paper pages, embedding-based topic clusters fed into reports, Embeddings card in Settings (coverage + backfill), embedding cost in usage/estimates |
 | **0.5.0** | *Report Update* | Daily / weekly / monthly trend reports (Python-computed stats + LLM narrative), Reports page with on-demand generate / push / delete, report model slot + cost estimate, `Cache-Control` on the app shell so upgrades never serve a stale frontend |
 | **0.4.0** | *Scoring Update* | Two-stage scoring (cheap screen → strong review w/ paper text + quality rubric), OpenRouter provider, per-stage model picker in Settings, real cost accounting + cost estimates, profile-aware "Relevance to Me" summary section, full `.env` editing from the UI (write-back + hot reload, secrets masked). **Breaking:** all API routes moved under `/api/` |
@@ -214,7 +216,10 @@ All endpoints are served under the **`/api`** prefix (e.g. `GET /api/papers`) so
 | `PATCH` | `/api/papers/{id}/score?score=N` | Set a manual score (overrides AI, disables re-scoring) |
 | `POST` | `/api/papers/re-score-date?date=YYYY-MM-DD` | Re-score all papers for a date |
 | `GET` | `/api/papers/start-date` · `/api/papers/next-date?date=` | Pagination helpers for the day-by-day feed |
+| `GET` | `/api/papers/recent?days=&min_score=&status=&category=&limit=&compact=` | Recent papers, newest first (compact by default) |
 | `GET` | `/api/authors` | Ranked author list (optional `?days=N`) |
+| `POST` | `/api/authors/lookup` | `{"names": [...], "days"?, "min_score"?, "limit_per_author", "mark_important"?}` — fuzzy people-of-interest lookup: matched name variants + their papers |
+| `POST` | `/api/authors/bulk` · `/api/authors/reindex` | Upsert many authors (is_important, bio, website, affiliation) · rebuild the fuzzy name index |
 | `GET` | `/api/authors/{name}/papers` | Papers by author (optional `?days=N`) |
 | `GET` / `PATCH` | `/api/authors/{name}/details` · `/api/authors/{name}` | Read / edit author bio, website, affiliation, `is_important` (score boost) |
 | `GET` | `/api/profile` | Current `USER_PROFILE` text |
@@ -235,6 +240,18 @@ All endpoints are served under the **`/api`** prefix (e.g. `GET /api/papers`) so
 | `POST` / `DELETE` | `/api/reports/{id}/push` · `/api/reports/{id}` | Push a report to Lark / delete it |
 | `WS` | `/api/ws/logs` | Live log stream (used by the in-app log viewer) |
 | `GET` | `/health` · `/api/health` | Liveness probe |
+
+---
+
+## 🤝 MCP server (agents / Claude Code)
+
+`mcp_server/` is a small separate package (`paper-agent-mcp`, stdio) with explicit tools over the API — see [`mcp_server/README.md`](mcp_server/README.md) for the tool list. Register it in Claude Code:
+
+```bash
+claude mcp add --scope user paper-agent -- uv run --directory /path/to/paper_agent/mcp_server paper-agent-mcp --base-url http://nas:8000
+```
+
+Typical asks: *"what did the people in my POI list publish this month"* (`papers_by_people`), *"papers from the last two weeks related to 2608.19556"* (`search_papers` with seeds), *"read 2608.18607 for me"* (`get_paper` with text), *"summarise this week's report"* (`list_reports` / `get_report`), *"mark 2608.18607 as 95, I read it"* (`set_user_score`).
 
 ---
 

@@ -1,7 +1,7 @@
 [project]
 name = "paper-agent"
-version = "0.6.0"
-description = "Retrieval Update"
+version = "1.0.0"
+description = "Agent Update"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [

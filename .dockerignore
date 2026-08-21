@@ -6,3 +6,6 @@ __pycache__
 frontend/node_modules
 frontend/dist
 data/
+
+# MCP client package is not part of the image
+mcp_server/
