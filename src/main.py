@@ -153,8 +153,55 @@ async def add_paper(request: AddPaperRequest, background_tasks: BackgroundTasks,
         
     # Trigger processing
     background_tasks.add_task(process_single_paper, new_paper.id, False, request.push)
-    
+
     return {"message": f"Paper {new_paper.id} added and processing started.", "paper": new_paper}
+
+class BulkPaperIn(SQLModel):
+    id: str
+    title: str
+    authors: List[str] = []
+    abstract: str = ""
+    published_at: datetime
+    updated_at: Optional[datetime] = None
+    category_primary: str = ""
+    all_categories: List[str] = []
+    pdf_url: str = ""
+
+class BulkInsertRequest(SQLModel):
+    papers: List[BulkPaperIn]
+
+@api.post("/papers/bulk-insert")
+def bulk_insert_papers(request: BulkInsertRequest, session: Session = Depends(get_session)):
+    """
+    Insert paper metadata directly as NEW, skipping ids that already exist.
+    Built for backfill: nothing is fetched from arXiv and nothing is pushed
+    here — the scheduled run scores all NEW papers in batch and the digest
+    picks up whatever qualifies.
+    """
+    if len(request.papers) > 1000:
+        raise HTTPException(status_code=400, detail="At most 1000 papers per request")
+    wanted = [re.sub(r'v\d+$', '', p.id.strip()) for p in request.papers]
+    existing = {p.id for p in session.exec(select(Paper).where(Paper.id.in_(wanted))).all()}
+    inserted = 0
+    for p in request.papers:
+        pid = re.sub(r'v\d+$', '', p.id.strip())
+        if pid in existing:
+            continue
+        existing.add(pid)
+        session.add(Paper(
+            id=pid,
+            title=p.title,
+            authors=json.dumps(p.authors),
+            summary_generic=p.abstract,
+            published_at=p.published_at,
+            category_primary=p.category_primary,
+            all_categories=json.dumps(p.all_categories),
+            pdf_url=p.pdf_url or f"https://arxiv.org/pdf/{pid}",
+            updated_at=p.updated_at or p.published_at,
+        ))
+        inserted += 1
+    session.commit()
+    return {"inserted": inserted, "skipped": len(request.papers) - inserted}
 
 @api.get("/papers", response_model=None)
 def list_papers(
