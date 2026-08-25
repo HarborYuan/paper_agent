@@ -5,7 +5,7 @@
   </p>
   <p align="center">
     <a href="https://github.com/HarborYuan/paper_agent/actions/workflows/docker-publish.yml"><img src="https://github.com/HarborYuan/paper_agent/actions/workflows/docker-publish.yml/badge.svg" alt="Docker Build"></a>
-    <img src="https://img.shields.io/badge/version-1.0.3-cyan" alt="Version">
+    <img src="https://img.shields.io/badge/version-1.0.4-cyan" alt="Version">
     <img src="https://img.shields.io/badge/python-3.13+-blue?logo=python&logoColor=white" alt="Python">
     <img src="https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white" alt="FastAPI">
     <img src="https://img.shields.io/badge/React-61DAFB?logo=react&logoColor=black" alt="React">
@@ -42,6 +42,7 @@
 
 | Version | Name | Highlights |
 |---------|------|------------|
+| **1.0.4** | *Text Extraction Update* | Follow-up to 1.0.3 after robustness testing on real arXiv data: short papers keep their HTML (structural `<article>` check replaces a length heuristic), legacy ids (`cs/0112017`) try HTML too, unexpanded LaTeXML macros no longer pollute the head of the text, nested `<math>` stops double-emitting |
 | **1.0.3** | *Text Extraction Update* | arXiv HTML (`arxiv.org/html/{id}`) preferred over PDF for full text — reading-order text, LaTeX kept from MathML `alttext`, arXiv page chrome stripped; PDF fallback now streams with a 30 MB cap and parses off the event loop; scheduled run no longer skips papers already sitting as `NEW` (backfills were being stranded) |
 | **1.0.2** | *Bulk Insert* | `POST /api/papers/bulk-insert` (up to 1000 papers, version-suffix stripping + dedupe), backfill script fetches metadata locally via `id_list` so the server never calls arXiv |
 | **1.0.1** | *Quiet Batch Update* | `push` flag on `POST /api/papers/add` and `/api/papers/re-score-date` — papers stay `SUMMARIZED` for the next scheduled digest instead of firing individual notifications; existing summaries reused; `scripts/backfill_missing.py` |

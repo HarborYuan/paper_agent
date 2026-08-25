@@ -22,12 +22,21 @@ from typing import Optional
 import httpx
 from pypdf import PdfReader
 
-ARXIV_ID_RE = re.compile(r"arxiv\.org/(?:pdf|abs|html)/([0-9]{4}\.[0-9]{4,5})")
+ARXIV_ID_RE = re.compile(
+    r"arxiv\.org/(?:pdf|abs|html)/"
+    r"([0-9]{4}\.[0-9]{4,5}|[a-z-]+(?:\.[A-Z]{2})?/[0-9]{7})"
+)
 
 MAX_PDF_BYTES = 30 * 1024 * 1024
 MAX_HTML_BYTES = 12 * 1024 * 1024
 MAX_TEXT_CHARS = 300_000          # matches SUMMARY_FULL_TEXT_CHAR_LIMIT; no point keeping more
 HTTP_TIMEOUT = 30.0
+
+# LaTeXML leaves author-defined macros it cannot expand as literal text, and they
+# land at the very top of the document — inside the 8000-char window stage-2 reads.
+# Macro names are lower-case by convention, so stopping at the first upper-case
+# letter keeps the content that follows: "\\titreAmelioration" -> "Amelioration".
+_LEAKED_MACRO_RE = re.compile(r"\\[a-z@]+(?:\[[^\]]{0,60}\])?")
 
 _SKIP_TAGS = {"script", "style", "noscript", "head", "svg"}
 _BLOCK_TAGS = {"p", "div", "section", "h1", "h2", "h3", "h4", "h5", "h6",
@@ -42,6 +51,8 @@ class _HTMLTextExtractor(HTMLParser):
     That chrome is only a few hundred characters, but stage-2 sees just the first
     8000, so letting it through would push the title and abstract out of view.
     """
+
+    saw_article = False
 
     def __init__(self, gate_on_article: bool = True):
         super().__init__(convert_charrefs=True)
@@ -59,6 +70,7 @@ class _HTMLTextExtractor(HTMLParser):
     def handle_starttag(self, tag, attrs):
         if tag == "article":
             self._article_depth += 1
+            self.saw_article = True
             return
         if tag in _SKIP_TAGS:
             self._skip_depth += 1
@@ -66,7 +78,7 @@ class _HTMLTextExtractor(HTMLParser):
         if tag == "math":
             # MathML renders as unreadable character soup; the LaTeX source is right here.
             alt = dict(attrs).get("alttext")
-            if alt and self._collecting:
+            if alt and self._collecting and self._math_depth == 0:
                 self._emit(f" ${alt}$ ")
             self._math_depth += 1
             return
@@ -84,7 +96,8 @@ class _HTMLTextExtractor(HTMLParser):
     def handle_data(self, data):
         if self._skip_depth or self._math_depth or not self._collecting:
             return
-        self._emit(data)
+        # Only body text is scrubbed; LaTeX we emit ourselves from alttext is left alone.
+        self._emit(_LEAKED_MACRO_RE.sub("", data))
 
     def _emit(self, s: str) -> None:
         if self._size >= MAX_TEXT_CHARS:
@@ -98,21 +111,27 @@ class _HTMLTextExtractor(HTMLParser):
         # LaTeXML indents generously; collapse runs of whitespace but keep paragraphs.
         raw = re.sub(r"[ \t\r\f\v\u00a0\u2009\u202f]+", " ", raw)
         raw = re.sub(r"\n\s*\n\s*", "\n\n", raw)
-        return raw.strip()[:MAX_TEXT_CHARS]
+        return raw.replace("\ufeff", "").strip()[:MAX_TEXT_CHARS]
 
 
-def _parse_html(markup: str) -> str:
+def _parse_html(markup: str) -> tuple[str, bool]:
+    """Return (text, is_a_real_paper).
+
+    The flag reports whether LaTeXML's <article> wrapper was present. Judging by
+    length instead would throw away short papers: 2607.25928 is a genuine
+    one-page proof whose HTML yields 2807 chars, and falling back to its PDF
+    replaces clean "$\\#443$" with mangled "#443".
+    """
     parser = _HTMLTextExtractor(gate_on_article=True)
     parser.feed(markup)
     parser.close()
-    text = parser.text
-    if text:
-        return text
-    # No <article> wrapper (older LaTeXML output): take the page as it comes.
+    if parser.saw_article and parser.text:
+        return parser.text, True
+    # No <article> wrapper: an error page, or markup this parser does not understand.
     fallback = _HTMLTextExtractor(gate_on_article=False)
     fallback.feed(markup)
     fallback.close()
-    return fallback.text
+    return fallback.text, False
 
 
 def _parse_pdf(data: bytes) -> str:
@@ -164,9 +183,9 @@ class PDFService:
                         body = await self._download(
                             client, f"https://arxiv.org/html/{arxiv_id}", MAX_HTML_BYTES)
                         if body:
-                            text = await asyncio.to_thread(_parse_html, body.decode("utf-8", "replace"))
-                            # A stub page ("no HTML for this paper") is far shorter than a real one.
-                            if len(text) > 4000:
+                            text, is_paper = await asyncio.to_thread(
+                                _parse_html, body.decode("utf-8", "replace"))
+                            if is_paper and text:
                                 print(f"Using arXiv HTML for {arxiv_id} ({len(text)} chars)")
                                 return text
                     except Exception as e:
