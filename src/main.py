@@ -93,6 +93,7 @@ async def trigger_run(background_tasks: BackgroundTasks):
 
 class AddPaperRequest(SQLModel):
     input: str
+    push: bool = True  # False: skip the individual notification; the next scheduled digest picks the paper up
 
 @api.post("/papers/add")
 async def add_paper(request: AddPaperRequest, background_tasks: BackgroundTasks, session: Session = Depends(get_session)):
@@ -129,7 +130,7 @@ async def add_paper(request: AddPaperRequest, background_tasks: BackgroundTasks,
         # If it exists, we can still trigger a re-process if requested? 
         # For now, just say it exists, but maybe trigger processing if it's incomplete?
         if existing.status in ["NEW", "FILTERED", "ERROR"]:
-             background_tasks.add_task(process_single_paper, arxiv_id)
+             background_tasks.add_task(process_single_paper, arxiv_id, False, request.push)
              return {"message": f"Paper {arxiv_id} already exists, triggered re-processing.", "id": arxiv_id}
         return {"message": f"Paper {arxiv_id} already exists.", "id": arxiv_id}
 
@@ -151,7 +152,7 @@ async def add_paper(request: AddPaperRequest, background_tasks: BackgroundTasks,
         return {"message": "Error saving paper, might already exist."}
         
     # Trigger processing
-    background_tasks.add_task(process_single_paper, new_paper.id)
+    background_tasks.add_task(process_single_paper, new_paper.id, False, request.push)
     
     return {"message": f"Paper {new_paper.id} added and processing started.", "paper": new_paper}
 
@@ -442,10 +443,12 @@ async def update_paper_score(paper_id: str, score: int, session: Session = Depen
 
 
 @api.post("/papers/re-score-date")
-async def rescore_date(date: str, background_tasks: BackgroundTasks, session: Session = Depends(get_session)):
+async def rescore_date(date: str, background_tasks: BackgroundTasks, push: bool = False, session: Session = Depends(get_session)):
     """
     Trigger re-scoring for all papers on a specific date.
     Rate limited to once per 60 seconds per date.
+    push=False (default) suppresses per-paper notifications; newly qualifying
+    papers stay SUMMARIZED and go out with the next scheduled digest.
     """
     try:
         # Rate Limiting
@@ -478,7 +481,7 @@ async def rescore_date(date: str, background_tasks: BackgroundTasks, session: Se
         
         for paper in papers:
             # Pass force_rescore=True
-            background_tasks.add_task(process_single_paper, paper.id, True)
+            background_tasks.add_task(process_single_paper, paper.id, True, push)
             
         return {"message": f"Started re-scoring for {len(papers)} papers on {date}"}
         

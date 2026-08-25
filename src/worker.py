@@ -311,11 +311,14 @@ async def run_worker():
             mark_pushed(r.id)
 
 
-async def process_single_paper(paper_id: str, force_rescore: bool = False):
+async def process_single_paper(paper_id: str, force_rescore: bool = False, notify: bool = True):
     """
     Process a single paper: score -> (if good) summarize -> notify (if configured)
+
+    With notify=False the paper is left in SUMMARIZED, so the next scheduled
+    run picks it up in the batched digest instead of an individual message.
     """
-    await logger.log(f"Processing single paper: {paper_id} (force_rescore={force_rescore})")
+    await logger.log(f"Processing single paper: {paper_id} (force_rescore={force_rescore}, notify={notify})")
 
     # Check if paper exists
     with Session(engine) as session:
@@ -339,8 +342,16 @@ async def process_single_paper(paper_id: str, force_rescore: bool = False):
 
     if not paper: return
 
-    # 2. Summarize
-    if paper.status == "SCORED" or (paper.score and paper.score >= threshold and not paper.summary_personalized):
+    # 2. Summarize (reuse an existing summary instead of regenerating it)
+    if paper.score and paper.score >= threshold and paper.summary_personalized:
+        if paper.status == "SCORED":
+            with Session(engine) as session:
+                db_p = session.get(Paper, paper_id)
+                if db_p:
+                    db_p.status = "SUMMARIZED"
+                    session.add(db_p)
+                    session.commit()
+    elif paper.status == "SCORED" or (paper.score and paper.score >= threshold):
         await process_paper_summary(sem, llm, paper)
 
     # Reload
@@ -350,7 +361,7 @@ async def process_single_paper(paper_id: str, force_rescore: bool = False):
     if not paper: return
 
     # 3. Notify
-    if paper.status == "SUMMARIZED":
+    if notify and paper.status == "SUMMARIZED":
         notifier = get_notifier()
         if notifier:
             digest = f"*New Paper Added:*\n\n"
