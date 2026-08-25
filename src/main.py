@@ -60,7 +60,23 @@ async def lifespan(app: FastAPI):
     # Shutdown (if needed)
     scheduler_service.shutdown()
 
-app = FastAPI(title="Paper Agent API", lifespan=lifespan)
+def _resolve_app_version() -> str:
+    try:
+        from importlib.metadata import version as _pkg_version
+        return _pkg_version("paper-agent")
+    except Exception:
+        pass
+    try:
+        import tomllib
+        from pathlib import Path
+        pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+        return tomllib.loads(pyproject.read_text())["project"]["version"]
+    except Exception:
+        return "unknown"
+
+APP_VERSION = _resolve_app_version()
+
+app = FastAPI(title="Paper Agent API", version=APP_VERSION, lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -978,7 +994,7 @@ def delete_report(report_id: int, session: Session = Depends(get_session)):
 
 @api.get("/health")
 def read_root():
-    return {"message": "Welcome to Paper Agent. POST /api/run to start processing.", "docs": "/docs", "api_prefix": "/api"}
+    return {"message": "Welcome to Paper Agent. POST /api/run to start processing.", "docs": "/docs", "api_prefix": "/api", "version": APP_VERSION}
 
 
 app.include_router(api)
