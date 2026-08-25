@@ -180,8 +180,14 @@ async def run_worker():
 
     notifier = get_notifier()
 
-    # No new papers — send rest-day notification (plus any weekly/monthly report that is due) and stop early
-    if not new_papers:
+    # Papers can sit as NEW without today's fetch producing anything: a backfill
+    # inserts them directly, and an earlier run may have died mid-scoring. Those
+    # still deserve a cycle, so only the genuinely idle case stops early.
+    with Session(engine) as session:
+        pending_new = session.exec(select(Paper.id).where(Paper.status == "NEW")).first()
+
+    # Nothing new and nothing pending — send rest-day notification (plus any weekly/monthly report that is due) and stop early
+    if not new_papers and not pending_new:
         await logger.log("No new papers retrieved.")
         reports = await run_scheduled_reports(run_started_at.date(), None, log=logger.log)
         if notifier:

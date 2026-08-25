@@ -99,29 +99,40 @@ def fetch_metadata(ids: list[str]) -> list[dict]:
     return records
 
 
+def nas_json(url: str, payload: dict | None = None, tries: int = 5, wait: int = 30):
+    # The NAS can stall for a while (e.g. its own maintenance windows) — retry politely.
+    for attempt in range(tries):
+        try:
+            if payload is None:
+                req = urllib.request.Request(url)
+            else:
+                req = urllib.request.Request(
+                    url, data=json.dumps(payload).encode(),
+                    headers={"Content-Type": "application/json"}, method="POST",
+                )
+            with urllib.request.urlopen(req, timeout=120) as r:
+                return json.load(r)
+        except Exception as e:
+            print(f"    NAS error (attempt {attempt + 1}/{tries}): {e}; retrying in {wait}s")
+            time.sleep(wait)
+    raise RuntimeError(f"NAS unreachable: {url[:100]}")
+
+
 def db_existing_ids(base_url: str, ids: list[str]) -> set[str]:
     # Existence check by id (immune to published_at landing on a different day, e.g. v2 dates)
     found: set[str] = set()
     for i in range(0, len(ids), 100):
         chunk = ids[i:i + 100]
-        url = f"{base_url}/api/papers?ids={','.join(chunk)}&compact=true"
-        with urllib.request.urlopen(url, timeout=30) as r:
-            found |= {p["id"] for p in json.load(r)}
+        found |= {p["id"] for p in nas_json(f"{base_url}/api/papers?ids={','.join(chunk)}&compact=true")}
     return found
 
 
 def bulk_insert(base_url: str, records: list[dict]) -> dict:
-    req = urllib.request.Request(
-        f"{base_url}/api/papers/bulk-insert",
-        data=json.dumps({"papers": records}).encode(),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=120) as r:
-        return json.load(r)
+    return nas_json(f"{base_url}/api/papers/bulk-insert", payload={"papers": records})
 
 
 def main() -> None:
+    global ARXIV_PAUSE
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--from", dest="date_from", required=True)
     parser.add_argument("--to", dest="date_to", required=True)
@@ -129,7 +140,11 @@ def main() -> None:
     parser.add_argument("--categories", default="cs.CV,cs.CL")
     parser.add_argument("--state", default=str(Path(__file__).with_name("backfill_state.json")))
     parser.add_argument("--dry-run", action="store_true", help="only report what would be added")
+    parser.add_argument("--pause", type=float, default=ARXIV_PAUSE,
+                        help="seconds between arXiv requests (raise for long sustained runs)")
     args = parser.parse_args()
+
+    ARXIV_PAUSE = args.pause
 
     categories = [c.strip() for c in args.categories.split(",") if c.strip()]
     day = datetime.strptime(args.date_from, "%Y-%m-%d").date()
