@@ -40,22 +40,24 @@
 
 ## 📋 Version History
 
+Names are reserved for feature milestones; patch releases intentionally have no name.
+
 | Version | Name | Highlights |
 |---------|------|------------|
-| **1.0.4** | *Text Extraction Update* | Follow-up to 1.0.3 after robustness testing on real arXiv data: short papers keep their HTML (structural `<article>` check replaces a length heuristic), legacy ids (`cs/0112017`) try HTML too, unexpanded LaTeXML macros no longer pollute the head of the text, nested `<math>` stops double-emitting |
-| **1.0.3** | *Text Extraction Update* | arXiv HTML (`arxiv.org/html/{id}`) preferred over PDF for full text — reading-order text, LaTeX kept from MathML `alttext`, arXiv page chrome stripped; PDF fallback now streams with a 30 MB cap and parses off the event loop; scheduled run no longer skips papers already sitting as `NEW` (backfills were being stranded) |
-| **1.0.2** | *Bulk Insert* | `POST /api/papers/bulk-insert` (up to 1000 papers, version-suffix stripping + dedupe), backfill script fetches metadata locally via `id_list` so the server never calls arXiv |
-| **1.0.1** | *Quiet Batch Update* | `push` flag on `POST /api/papers/add` and `/api/papers/re-score-date` — papers stay `SUMMARIZED` for the next scheduled digest instead of firing individual notifications; existing summaries reused; `scripts/backfill_missing.py` |
+| **1.0.4** | — | Follow-up to 1.0.3 after robustness testing on real arXiv data: short papers keep their HTML (structural `<article>` check replaces a length heuristic), legacy ids (`cs/0112017`) try HTML too, unexpanded LaTeXML macros no longer pollute the head of the text, nested `<math>` stops double-emitting |
+| **1.0.3** | — | arXiv HTML (`arxiv.org/html/{id}`) preferred over PDF for full text — reading-order text, LaTeX kept from MathML `alttext`, arXiv page chrome stripped; PDF fallback now streams with a 30 MB cap and parses off the event loop; scheduled run no longer skips papers already sitting as `NEW` (backfills were being stranded) |
+| **1.0.2** | — | `POST /api/papers/bulk-insert` (up to 1000 papers, version-suffix stripping + dedupe), backfill script fetches metadata locally via `id_list` so the server never calls arXiv |
+| **1.0.1** | — | `push` flag on `POST /api/papers/add` and `/api/papers/re-score-date` — papers stay `SUMMARIZED` for the next scheduled digest instead of firing individual notifications; existing summaries reused; `scripts/backfill_missing.py` |
 | **1.0.0** | *Agent Update* | MCP server (`paper-agent-mcp`, 13 tools), agent endpoints: `GET /api/papers/recent`, fuzzy batch `POST /api/authors/lookup` (people of interest), `POST /api/authors/bulk`, `POST /api/authors/reindex` |
-| **0.6.0** | *Retrieval Update* | Paper embeddings (OpenRouter `/embeddings`, default `voyageai/voyage-4` @512), semantic search toggle on the main page, Related papers on paper pages, embedding-based topic clusters fed into reports, Embeddings card in Settings (coverage + backfill), embedding cost in usage/estimates |
-| **0.5.0** | *Report Update* | Daily / weekly / monthly trend reports (Python-computed stats + LLM narrative), Reports page with on-demand generate / push / delete, report model slot + cost estimate, `Cache-Control` on the app shell so upgrades never serve a stale frontend |
+| **0.6.0** | *Semantic Update* | Paper embeddings (OpenRouter `/embeddings`, default `voyageai/voyage-4` @512), semantic search toggle on the main page, Related papers on paper pages, embedding-based topic clusters fed into reports, Embeddings card in Settings (coverage + backfill), embedding cost in usage/estimates |
+| **0.5.0** | *Radar Update* | Daily / weekly / monthly trend reports (Python-computed stats + LLM narrative), Reports page with on-demand generate / push / delete, report model slot + cost estimate, `Cache-Control` on the app shell so upgrades never serve a stale frontend |
 | **0.4.0** | *Scoring Update* | Two-stage scoring (cheap screen → strong review w/ paper text + quality rubric), OpenRouter provider, per-stage model picker in Settings, real cost accounting + cost estimates, profile-aware "Relevance to Me" summary section, full `.env` editing from the UI (write-back + hot reload, secrets masked). **Breaking:** all API routes moved under `/api/` |
-| **0.3.1** | *Notification Update* | Authors in digest, rest-day notification, daily scoring stats |
-| **0.3.0** | *Retrieval Update* | Global search by title frontend/backend |
-| **0.2.1** | *Author Detail Update* | Edit author details, claim important authors for score boost |
+| **0.3.1** | — | Authors in digest, rest-day notification, daily scoring stats |
+| **0.3.0** | *Search Update* | Global search by title frontend/backend |
+| **0.2.1** | — | Edit author details, claim important authors for score boost |
 | **0.2.0** | *Authors Update* | Author ranking pages with time-range filter (7d/30d/90d/180d/360d/All) |
-| **0.1.0** | *Notification Update* | Replaced Telegram/Pushover with Lark (飞书) webhook, date-grouped digests |
-| **0.0.3** | *Beautify Update* | Markdown-rendered AI summaries, score threshold slider, per-paper refresh, README rewrite |
+| **0.1.0** | *Lark Update* | Replaced Telegram/Pushover with Lark (飞书) webhook, date-grouped digests |
+| **0.0.3** | — | Markdown-rendered AI summaries, score threshold slider, per-paper refresh, README rewrite |
 | **0.0.2** | — | Docker deployment, auto-update scheduler, WebSocket log viewer |
 | **0.0.1** | — | Initial release: fetch, score, summarize, notify |
 
@@ -270,4 +272,3 @@ cd frontend && npm run build             # production bundle -> frontend/dist
 ```
 
 Layout: `src/main.py` (FastAPI routes), `src/worker.py` (fetch → two-stage score → summarize → notify), `src/services/` (arxiv, llm, pdf, notifier, model_catalog, settings_service, env_file, usage_service), `src/prompts/*.jinja2`, `src/migrations.py` (numbered, run automatically at startup), `frontend/src/` (React 19 + Vite + Tailwind). Docker image = `node` build stage for the frontend + `linuxserver/baseimage-alpine` + `uv`; pushing a `v*.*.*` tag publishes `harbory/paper-agent:<version>` and `:latest`, pushing `main` publishes `:dev`.
-

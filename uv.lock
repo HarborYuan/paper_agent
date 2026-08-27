@@ -404,7 +404,7 @@ wheels = [
 
 [[package]]
 name = "paper-agent"
-version = "1.0.3"
+version = "1.0.4"
 source = { virtual = "." }
 dependencies = [
     { name = "apscheduler" },
