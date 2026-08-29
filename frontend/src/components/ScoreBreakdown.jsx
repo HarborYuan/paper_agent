@@ -1,5 +1,5 @@
 import React from 'react';
-import { Filter, Microscope, ArrowRight, Sparkles, ThumbsUp, ThumbsDown, Flag, User } from 'lucide-react';
+import { Filter, Microscope, ArrowRight, Sparkles, ThumbsUp, ThumbsDown, Flag, User, BookOpen } from 'lucide-react';
 
 /**
  * Renders the scoring details stored in paper.score_reason.
@@ -85,6 +85,12 @@ function StageCard({ icon: Icon, title, stage, dims, accent }) {
                         </div>
                     ) : null}
                     <Flags flags={stage.risk_flags} />
+                    {stage.deep_read === true && (
+                        <p className="text-[11px] text-cyan-400/80 mt-2 flex items-start gap-1.5">
+                            <BookOpen size={11} className="mt-0.5 shrink-0" />
+                            <span>Deep read: the reviewer requested the extended text{stage.deep_read_reason ? ` — ${stage.deep_read_reason}` : ''}</span>
+                        </p>
+                    )}
                     {stage.had_full_text === false && <p className="text-[11px] text-yellow-400/80 mt-2">Reviewed from the abstract only (PDF text unavailable).</p>}
                 </>
             )}

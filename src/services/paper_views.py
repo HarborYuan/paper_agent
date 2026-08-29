@@ -23,13 +23,23 @@ def one_line_reason(p: Paper) -> str:
     return str(st.get("one_line_reason") or "") if isinstance(st, dict) else ""
 
 
-def tldr(p: Paper, chars: int = TLDR_CHARS) -> str:
-    if not p.summary_personalized:
+def summary_tldr(summary: Optional[str], chars: int = TLDR_CHARS) -> str:
+    """
+    One-line teaser from a structured summary: the "## TL;DR" section when present,
+    otherwise the first heading-free lines. Single line, at most `chars` chars.
+    """
+    if not summary:
         return ""
-    txt = re.sub(r"^#+.*$", "", p.summary_personalized, flags=re.M)
+    m = re.search(r"^##\s*TL;?DR[^\n]*\n(.*?)(?=^##\s|\Z)", summary, flags=re.M | re.S | re.I)
+    txt = m.group(1) if m else summary
+    txt = re.sub(r"^#+.*$", "", txt, flags=re.M)
     txt = re.sub(r"^```.*$", "", txt, flags=re.M)
     txt = " ".join(txt.split())
     return txt[:chars] + ("…" if len(txt) > chars else "")
+
+
+def tldr(p: Paper, chars: int = TLDR_CHARS) -> str:
+    return summary_tldr(p.summary_personalized, chars)
 
 
 def compact_paper(p: Paper, similarity: Optional[float] = None) -> Dict[str, Any]:

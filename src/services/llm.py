@@ -33,6 +33,9 @@ class Stage2ScoreResponse(BaseModel):
     strengths: List[str] = []
     weaknesses: List[str] = []
     one_line_reason: str = ""
+    # Agentic read metadata (set by score_paper_stage2, not by the model)
+    deep_read: bool = False
+    deep_read_reason: Optional[str] = None
 
 class AffiliationResponse(BaseModel):
     affiliations: List[str]
@@ -238,27 +241,69 @@ class LLMService:
 
     # ------------------------------------------------------------------ stage 2
     async def score_paper_stage2(self, paper: Paper, user_profile: str,
-                                 text_snippet: Optional[str]) -> Optional[Stage2ScoreResponse]:
+                                 full_text: Optional[str]) -> Optional[Stage2ScoreResponse]:
         """
-        Stage 2: careful review with a stronger model, given an excerpt of the paper body.
+        Stage 2: careful review with a stronger model — agentic two-pass read.
+
+        Pass 1 (triage) shows the first STAGE2_TEXT_CHAR_LIMIT chars of the paper.
+        When that excerpt is truncated, the reviewer may answer
+        {"action": "read_more"} instead of a verdict; it is then re-run once with
+        the text up to STAGE2_DEEP_TEXT_CHAR_LIMIT chars. Irrelevant papers are
+        expected to finalize on pass 1, so the expensive deep read is only paid
+        for papers whose verdict hinges on the evidence beyond the excerpt.
         """
         authors = paper.authors_list
         authors_str = ", ".join(authors[:8]) + (f" (+{len(authors) - 8} more)" if len(authors) > 8 else "")
-        snippet = sanitize_text(text_snippet) if text_snippet else None
-        limit = settings.STAGE2_TEXT_CHAR_LIMIT
-        if snippet and len(snippet) > limit:
-            snippet = snippet[:limit]
-        prompt = prompt_service.render_prompt(
-            "scoring_stage2.jinja2",
-            paper=paper, user_profile=user_profile, authors_str=authors_str,
-            text_snippet=snippet, score_threshold=self.config.score_threshold,
-        )
-        content = await self._chat(TASK_STAGE2, prompt, json_mode=True, temperature=0.0, paper_id=paper.id)
-        if content is None:
+        full = sanitize_text(full_text) if full_text else None
+
+        async def _review(excerpt: Optional[str], truncated: bool,
+                          allow_read_more: bool, deep_read: bool) -> Optional[Dict[str, Any]]:
+            visible_pct = round(100 * len(excerpt) / len(full)) if (excerpt and full) else 100
+            prompt = prompt_service.render_prompt(
+                "scoring_stage2.jinja2",
+                paper=paper, user_profile=user_profile, authors_str=authors_str,
+                text_snippet=excerpt, truncated=truncated, visible_pct=visible_pct,
+                allow_read_more=allow_read_more, deep_read=deep_read,
+                score_threshold=self.config.score_threshold,
+            )
+            content = await self._chat(TASK_STAGE2, prompt, json_mode=True, temperature=0.0, paper_id=paper.id)
+            if content is None:
+                return None
+            try:
+                return extract_json_object(content)
+            except Exception as e:
+                print(f"Error parsing stage-2 score for {paper.id}: {e}")
+                return None
+
+        head_limit = settings.STAGE2_TEXT_CHAR_LIMIT
+        deep_limit = settings.STAGE2_DEEP_TEXT_CHAR_LIMIT
+        truncated = bool(full) and len(full) > head_limit
+        can_deep = truncated and deep_limit > head_limit
+
+        excerpt = full[:head_limit] if full else None
+        data = await _review(excerpt, truncated, allow_read_more=can_deep, deep_read=False)
+        if data is None:
             return None
+
+        deep_read = False
+        deep_reason: Optional[str] = None
+        if data.get("action") == "read_more" and can_deep:
+            deep_read = True
+            deep_reason = str(data.get("reason") or "") or None
+            print(f"  - Stage-2 reviewer requested extended text for {paper.id}: {deep_reason}")
+            data = await _review(full[:deep_limit], len(full) > deep_limit,
+                                 allow_read_more=False, deep_read=True)
+            if data is None:
+                return None
+        if data.get("action"):
+            # An action where only a verdict is valid (e.g. read_more on the final pass)
+            print(f"  - Stage-2 reviewer returned no verdict for {paper.id}: {data}")
+            return None
+
         try:
-            data = extract_json_object(content)
             return Stage2ScoreResponse(
+                deep_read=deep_read,
+                deep_read_reason=deep_reason,
                 score=_clamp_int(data.get("score")),
                 relevance=_clamp_int(data.get("relevance"), 0, 5),
                 novelty=_clamp_int(data.get("novelty"), 0, 5),

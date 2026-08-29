@@ -60,8 +60,11 @@ SCHEMA: List[Field] = [
     Field("LLM_MODEL_SUMMARY", "models", "str", "Summary model", "", owner="models"),
     Field("STAGE2_THRESHOLD", "models", "int", "Stage-2 threshold", "", min=0, max=100, owner="models"),
     Field("SCORE_THRESHOLD", "models", "int", "Score threshold", "", min=0, max=100, owner="models"),
-    Field("STAGE2_TEXT_CHAR_LIMIT", "pipeline", "int", "Stage-2 text limit (chars)",
-          "How much of the PDF text the stage-2 reviewer sees.", min=1000, max=200000),
+    Field("STAGE2_TEXT_CHAR_LIMIT", "pipeline", "int", "Stage-2 first-pass text (chars)",
+          "How much of the paper the stage-2 reviewer sees on the first pass.", min=1000, max=300000),
+    Field("STAGE2_DEEP_TEXT_CHAR_LIMIT", "pipeline", "int", "Stage-2 extended text (chars)",
+          "Text limit for the second pass, when the reviewer decides the paper is relevant enough "
+          "that the verdict hinges on evidence beyond the first pass.", min=10000, max=300000),
     # Retrieval
     Field("EMBEDDING_MODEL", "retrieval", "str", "Embedding model",
           "Used for semantic search, related papers and topic clustering. Changing it makes existing vectors stale — run Backfill afterwards."),

@@ -3,25 +3,47 @@ Please summarize the following paper for me.
 
 Target Audience: A researcher in this field.
 
+RULES:
+- Base every statement strictly on the provided text. Do NOT invent numbers, benchmarks, baselines, results or affiliations.
+- If a section's information is not present in the provided text, write exactly "Not mentioned." — do not guess.
+- Start directly with `## TL;DR`; no preamble, no closing remarks.
+{% if not full_text %}- Only the abstract is available (the full text could not be extracted). Expect most experiment-related sections to be "Not mentioned." — do not reconstruct them from the abstract's claims.
+{% endif %}
 {% if user_profile %}
-MY RESEARCH PROFILE (use it only for the "Relevance to Me" section; keep every other section objective):
+MY RESEARCH PROFILE (use it only for the "Relevance to Me" and "Reading Recommendation" sections; keep every other section objective):
 {{ user_profile }}
 {% endif %}
 
 Format Requirement:
 {% if language == 'CN' %}
-Please structure your summary using the following exactly-named Markdown headings (using `##`). Keep the headings such as "## Problem" in English, but please output the content in Chinese.
+Please structure your summary using the following exactly-named Markdown headings (using `##`). Keep the headings such as "## Problem" in English, and write the content in Chinese with these STYLE rules:
+- 说人话: write the way a senior researcher explains a paper to a colleague — direct, concrete, natural Chinese. No translationese, no academic boilerplate (never "本文提出了一种新颖的…框架，实验证明了其有效性" — style filler like this is banned).
+- Keep technical terms, method/model names, datasets, benchmarks and metrics in ENGLISH (attention, KV cache, tokenizer, diffusion, mAP, CLIP, ablation …); do not force-translate them. Mixed Chinese-English sentences are expected and correct.
+- Example of the target style — bad: "该方法通过引入创新的注意力机制显著提升了长视频生成性能"; good: "把 cross-attention 的 KV 换成滑动的 memory bank，长序列不用整段重算".
+- Prefer short sentences; state the mechanism, not adjectives.
 {% else %}
 Please structure your summary using the following exactly-named Markdown headings (using `##`):
 {% endif %}
-## Problem 
+## TL;DR
+1-2 plain sentences: what the paper does and the single most important takeaway. No markdown formatting inside — this text is shown as-is in my notification feed.
+
+## Problem
 What problem this paper solves.
 
 ## Key Contributions
 3-5 contributions (verifiable if possible).
 
+## Teaser Figure
+What the teaser (usually Figure 1) shows and the message it is designed to deliver, judged from its caption and how the text references it: what is being compared or illustrated, and why the authors chose THIS as the first thing a reader sees. If no teaser figure is identifiable in the text, write "Not mentioned."
+
+## Intro Narrative
+How the introduction builds its story, as a 3-6 step arc (e.g. "broad trend → concrete failure of prior work → why existing fixes fall short → key observation → contributions"). Capture the actual rhetorical moves of THIS paper, not a generic template: what it opens with, how it frames the gap, where the key insight lands.
+
 ## Method Summary
 100-200 words explaining the technical approach.
+
+## Method Writing
+How the method section is written, not what it contains: its structure (problem formulation / preliminaries / subsection layout), the presentation style (notation-heavy vs figure-driven, algorithm boxes, running examples), and 1-2 concrete moves in the exposition worth borrowing for my own writing.
 
 ## Training Data
 Data/synthetic data used.
@@ -40,7 +62,10 @@ Whether ablation studies are included.
 
 {% if user_profile %}
 ## Relevance to Me
-2-4 sentences: which of my interests this touches, what is directly reusable (idea / recipe / data / benchmark), and whether it is worth a deep read.
+2-4 sentences: which of my interests this touches and what is directly reusable (idea / recipe / data / benchmark).
+
+## Reading Recommendation
+Should I actually read this, and how? Start with ONE verdict — "Must-read", "Worth a careful read", "Skim the method and tables", or "Skip unless <condition>" — then 1-2 sentences of justification and, if worth opening, which sections/figures to look at first. Judge from the paper's substance (evidence quality, novelty, reusability for my profile), not from its own claims.
 
 {% endif %}
 ## Missing Info

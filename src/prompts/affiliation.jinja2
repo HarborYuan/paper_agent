@@ -13,31 +13,27 @@ RULES for "main_affiliation":
      - Only middle authors are from a company.
      - Both First Author AND Last Author are from a university, and there is no mention of internship.
      - The corresponding author is solely from a university.
-2. ** internships:** Pay close attention to footnotes or author bios mentioning "Work done during an internship at [Company]". In this case, the main affiliation is likely the COMPANY.
+2. **Internships:** Pay close attention to footnotes or author bios mentioning "Work done during an internship at [Company]". In this case, the main affiliation is likely the COMPANY.
 3. **Complex Cases:** If affiliations are mixed, prioritize the entity that seems to have led the project (usually indicated by First/Last author and computing resources used).
-4. **Distinguish Famous AI Labs:** (e.g. "ByteDance Seed" vs "ByteDance", "Google DeepMind" vs "Google", "FAIR" vs "Meta").
 
 RULES for Formatting (CRITICAL):
-1. **Universities (US):** Use standard abbreviations for well-known US universities. Examples:
-   - "University of Virginia" -> "UVA"
-   - "University of California, Berkeley" -> "UC Berkeley"
-   - "Massachusetts Institute of Technology" -> "MIT"
-   - "Stanford University" -> "Stanford"
-   - "University of California, San Diego" -> "UCSD"
-2. **Universities (Non-US/Other):** Use full names (e.g. "Peking University", "Tsinghua University").
-3. **Companies:** Use unified names, NO "Inc.", "Corp.", "Ltd.", etc. Examples:
-   - "ByteDance Inc." -> "ByteDance"
-   - "Google LLC" -> "Google"
-   - "Meta Platforms" -> "Meta"
-4. **Famous Labs:** Be specific. Examples:
+1. **Strip qualifiers:** drop departments, schools, labs and campuses ("Department of EECS, MIT" -> "MIT"), and legal suffixes for companies ("Inc.", "Corp.", "Ltd.", "LLC").
+2. **Well-known universities:** use the short form the community uses in papers. Canonical examples — output EXACTLY these forms:
+   - US: MIT, Stanford, CMU, UC Berkeley, UCLA, UCSD, UC Merced, UIUC, Caltech, Georgia Tech, Cornell, Princeton, Harvard, Yale, Columbia, UPenn, NYU, USC, UMich, UT Austin, UW (University of Washington), UMD, UNC, UVA, Johns Hopkins
+   - Europe: ETH Zurich, EPFL, Oxford, Cambridge, Imperial College London, TUM, MPI Informatics
+   - Asia-Pacific: KAIST, POSTECH, NUS, NTU (Nanyang Technological University), University of Tokyo, HKU, HKUST, CUHK, MBZUAI
+   - Chinese mainland: Tsinghua University, Peking University, Zhejiang University, Fudan University, SJTU, USTC, BUAA, HIT, CASIA (Institute of Automation, CAS)
+3. **Other universities:** use the full official name (e.g. "University of Amsterdam"); do not invent abbreviations.
+4. **Companies:** use unified names: "ByteDance Inc." -> "ByteDance", "Google LLC" -> "Google", "Meta Platforms" -> "Meta".
+5. **Famous AI Labs:** be specific; keep the lab identity distinct from the parent company:
    - "Google DeepMind" (not just Google or DeepMind)
-   - "Meta Superintelligence Labs"
-   - "Meta Reality Labs"
+   - "Meta Superintelligence Labs", "Meta Reality Labs", "FAIR"
    - "ByteDance Seed"
    - "Microsoft Research"
-   - "Meta Superintelligence Labs"
+   - "NVIDIA Research"
 
-OUTPUT FORMAT (JSON):
+OUTPUT FORMAT:
+Return ONLY a JSON object with exactly these keys:
 {
     "affiliations": ["List of all unique affiliations found"],
     "main_company": "Name of the main company if present, else null",

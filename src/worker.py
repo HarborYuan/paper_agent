@@ -9,6 +9,7 @@ from src.models import Paper, Author
 from src.services.arxiv import ArxivFetcher
 from src.services.llm import LLMService
 from src.services.notifier import get_notifier
+from src.services.paper_views import summary_tldr
 from src.services.pdf_service import pdf_service
 from src.services.settings_service import get_llm_config
 from src.services.usage_service import cost_since
@@ -29,7 +30,8 @@ async def process_paper_score(sem: asyncio.Semaphore, llm: LLMService, paper: Pa
     """
     Two-stage scoring:
       stage 1 — cheap model, title+abstract, recall-oriented
-      stage 2 — stronger model, abstract + beginning of full text, precision-oriented;
+      stage 2 — stronger model, precision-oriented, agentic read (triage excerpt, then the
+                extended text if the reviewer asks for it);
                 runs only when stage-1 score >= stage2_threshold. Final score = stage 2 when it ran.
     """
     async with sem:
@@ -65,8 +67,9 @@ async def process_paper_score(sem: asyncio.Semaphore, llm: LLMService, paper: Pa
             if not text and paper.pdf_url:
                 text = await pdf_service.extract_text_from_url(paper.pdf_url)
                 fetched_text = text
-            snippet = text[: settings.STAGE2_TEXT_CHAR_LIMIT] if text else None
-            s2 = await llm.score_paper_stage2(paper, settings.USER_PROFILE, snippet)
+            # Full text goes in; score_paper_stage2 decides how much of it to show
+            # (triage excerpt first, extended read only if the reviewer asks).
+            s2 = await llm.score_paper_stage2(paper, settings.USER_PROFILE, text)
             if s2 is not None:
                 final_score = s2.score
                 final_model = cfg.stage2_model
@@ -294,8 +297,7 @@ async def run_worker():
                 digest += f"   ⭐ Score: {p.score}{aff}\n"
                 digest += f"   🔗 {p.pdf_url}\n"
                 if p.summary_personalized:
-                    tldr = p.summary_personalized[:150].replace("\n", " ")
-                    digest += f"   💡 {tldr}...\n"
+                    digest += f"   💡 {summary_tldr(p.summary_personalized, 150)}\n"
                 digest += "\n"
             messages.append(digest)
 
@@ -373,7 +375,7 @@ async def process_single_paper(paper_id: str, force_rescore: bool = False, notif
             digest = f"*New Paper Added:*\n\n"
             digest += f"📄 *{paper.title}* (Score: {paper.score})\n"
             digest += f"[PDF]({paper.pdf_url})\n"
-            digest += f"tl;dr: {paper.summary_personalized[:200]}...\n\n"
+            digest += f"tl;dr: {summary_tldr(paper.summary_personalized, 200)}\n\n"
 
             success = await notifier.send_message(digest)
 

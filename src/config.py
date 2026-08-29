@@ -19,7 +19,8 @@ class Settings(BaseSettings):
     LLM_MODEL_SUMMARY: str = "openai/gpt-4o-mini"         # full-text summarization
     STAGE2_THRESHOLD: int = 60        # stage-1 score needed to trigger stage-2 review
     SCORE_THRESHOLD: int = 85         # final score needed to summarize + notify
-    STAGE2_TEXT_CHAR_LIMIT: int = 8000  # chars of full text shown to the stage-2 reviewer
+    STAGE2_TEXT_CHAR_LIMIT: int = 20000       # first-pass excerpt shown to the stage-2 reviewer
+    STAGE2_DEEP_TEXT_CHAR_LIMIT: int = 120000  # extended excerpt when the reviewer asks to read on
 
     # Embeddings (semantic search / related papers / topic clustering). Served through the same
     # OpenAI-compatible /embeddings endpoint (OpenRouter lists them under /embeddings/models).

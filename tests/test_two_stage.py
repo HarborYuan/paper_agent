@@ -257,6 +257,82 @@ def test_user_score_skips_everything(worker_env):
 
 
 # ---------------------------------------------------------------------------
+# Agentic stage 2: triage first pass, optional deep read
+# ---------------------------------------------------------------------------
+FINAL_VERDICT = json.dumps({
+    "one_line_reason": "solid and relevant", "score": 88, "relevance": 5, "novelty": 4,
+    "quality": 4, "clarity": 4, "risk_flags": [], "strengths": ["s"], "weaknesses": ["w"],
+})
+READ_MORE = json.dumps({"action": "read_more", "reason": "need to see the ablations"})
+
+
+def _stage2_paper():
+    return _mk_paper(pid="2401.42424")
+
+
+def _stage2_svc(replies):
+    from src.services.llm import LLMService
+    svc = LLMService(config=LLMConfig("cheap/m", "strong/m", "sum/m", 60, 85))
+    svc._chat = AsyncMock(side_effect=list(replies))
+    return svc
+
+
+@pytest.fixture
+def stage2_limits(monkeypatch):
+    from src.config import settings as app_settings
+    monkeypatch.setattr(app_settings, "STAGE2_TEXT_CHAR_LIMIT", 100)
+    monkeypatch.setattr(app_settings, "STAGE2_DEEP_TEXT_CHAR_LIMIT", 300)
+
+
+def test_stage2_deep_read_on_request(stage2_limits):
+    svc = _stage2_svc([READ_MORE, FINAL_VERDICT])
+    res = asyncio.run(svc.score_paper_stage2(_stage2_paper(), "profile", "x" * 250))
+    assert svc._chat.await_count == 2
+    p1 = svc._chat.await_args_list[0].args[1]
+    p2 = svc._chat.await_args_list[1].args[1]
+    assert '"action": "read_more"' in p1          # pass 1 offers the triage action
+    assert "read_more" not in p2                   # pass 2 doesn't
+    assert "final pass" in p2
+    assert "x" * 250 in p2 and "x" * 250 not in p1  # pass 2 got the longer excerpt
+    assert res.score == 88 and res.deep_read is True
+    assert res.deep_read_reason == "need to see the ablations"
+
+
+def test_stage2_finalizes_without_deep_read(stage2_limits):
+    svc = _stage2_svc([FINAL_VERDICT])
+    res = asyncio.run(svc.score_paper_stage2(_stage2_paper(), "profile", "x" * 250))
+    assert svc._chat.await_count == 1
+    assert res.score == 88 and res.deep_read is False and res.deep_read_reason is None
+
+
+def test_stage2_short_text_gets_no_triage_offer(stage2_limits):
+    svc = _stage2_svc([FINAL_VERDICT])
+    res = asyncio.run(svc.score_paper_stage2(_stage2_paper(), "profile", "short body"))
+    prompt = svc._chat.await_args.args[1]
+    assert "read_more" not in prompt
+    assert "full extracted text" in prompt
+    assert res.score == 88
+
+
+def test_stage2_no_text_judges_from_abstract(stage2_limits):
+    svc = _stage2_svc([FINAL_VERDICT])
+    res = asyncio.run(svc.score_paper_stage2(_stage2_paper(), "profile", None))
+    prompt = svc._chat.await_args.args[1]
+    assert "no_full_text" in prompt and "read_more" not in prompt
+    assert res.score == 88
+
+
+def test_stage2_deep_read_failure_returns_none(stage2_limits):
+    svc = _stage2_svc([READ_MORE, None])
+    assert asyncio.run(svc.score_paper_stage2(_stage2_paper(), "profile", "x" * 250)) is None
+
+
+def test_stage2_action_on_final_pass_returns_none(stage2_limits):
+    svc = _stage2_svc([READ_MORE, READ_MORE])
+    assert asyncio.run(svc.score_paper_stage2(_stage2_paper(), "profile", "x" * 250)) is None
+
+
+# ---------------------------------------------------------------------------
 # Provider-aware model id resolution
 # ---------------------------------------------------------------------------
 def test_resolve_model_legacy_vs_openrouter():

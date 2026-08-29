@@ -19,6 +19,7 @@ from sqlmodel import Session, select
 from src.config import settings
 from src.database import engine
 from src.models import Paper, Author, Report, LLMUsage
+from src.services.paper_views import summary_tldr
 from src.services.prompt_service import prompt_service
 from src.services.settings_service import get_llm_config
 from src.utils import sanitize_text
@@ -174,11 +175,7 @@ def _paper_view(p: Paper) -> Dict[str, Any]:
                 reason = st.get("one_line_reason") or ""
         except json.JSONDecodeError:
             reason = ""
-    tldr = ""
-    if p.summary_personalized:
-        txt = re.sub(r"^#+.*$", "", p.summary_personalized, flags=re.M)
-        txt = " ".join(txt.split())
-        tldr = txt[:280] + ("…" if len(txt) > 280 else "")
+    tldr = summary_tldr(p.summary_personalized, 280)
     return {"id": p.id, "title": p.title, "score": p.score, "affiliation": p.main_affiliation or p.main_company or "",
             "reason": reason[:300], "tldr": tldr}
 

@@ -5,7 +5,7 @@
   </p>
   <p align="center">
     <a href="https://github.com/HarborYuan/paper_agent/actions/workflows/docker-publish.yml"><img src="https://github.com/HarborYuan/paper_agent/actions/workflows/docker-publish.yml/badge.svg" alt="Docker Build"></a>
-    <img src="https://img.shields.io/badge/version-1.0.4-cyan" alt="Version">
+    <img src="https://img.shields.io/badge/version-1.1.0-cyan" alt="Version">
     <img src="https://img.shields.io/badge/python-3.13+-blue?logo=python&logoColor=white" alt="Python">
     <img src="https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white" alt="FastAPI">
     <img src="https://img.shields.io/badge/React-61DAFB?logo=react&logoColor=black" alt="React">
@@ -44,6 +44,7 @@ Names are reserved for feature milestones; patch releases intentionally have no 
 
 | Version | Name | Highlights |
 |---------|------|------------|
+| **1.1.0** | *Deep Read Update* | Stage-2 reviewer reads agentically: 20k-char triage pass, then ONE optional extended read (120k chars, new `STAGE2_DEEP_TEXT_CHAR_LIMIT`) when the verdict hinges on unseen experiments — `deep_read` + its reason stored and shown in the UI; prompt overhaul: summaries gain `## TL;DR` (single shared extractor now feeds digest / reports / API teasers), writing-craft sections (Teaser Figure, Intro Narrative, Method Writing), an explicit Reading Recommendation verdict, grounding rules ("Not mentioned." instead of guessing), CN 说人话 style with technical terms kept in English; stage-1/stage-2 relevance tiers unified; affiliation prompt gets a canonical list of university short forms |
 | **1.0.4** | — | Follow-up to 1.0.3 after robustness testing on real arXiv data: short papers keep their HTML (structural `<article>` check replaces a length heuristic), legacy ids (`cs/0112017`) try HTML too, unexpanded LaTeXML macros no longer pollute the head of the text, nested `<math>` stops double-emitting |
 | **1.0.3** | — | arXiv HTML (`arxiv.org/html/{id}`) preferred over PDF for full text — reading-order text, LaTeX kept from MathML `alttext`, arXiv page chrome stripped; PDF fallback now streams with a 30 MB cap and parses off the event loop; scheduled run no longer skips papers already sitting as `NEW` (backfills were being stranded) |
 | **1.0.2** | — | `POST /api/papers/bulk-insert` (up to 1000 papers, version-suffix stripping + dedupe), backfill script fetches metadata locally via `id_list` so the server never calls arXiv |
