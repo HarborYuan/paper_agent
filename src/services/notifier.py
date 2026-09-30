@@ -64,3 +64,17 @@ def get_notifier() -> Optional[Notifier]:
     if settings.LARK_WEBHOOK_URL:
         return LarkNotifier(settings.LARK_WEBHOOK_URL)
     return None
+
+
+async def alert_arxiv_failure(context: str, error: Exception) -> bool:
+    """Push an arXiv-API outage alert to Lark. Returns False when no notifier is configured or the push failed."""
+    notifier = get_notifier()
+    if not notifier:
+        return False
+    return await notifier.send_message(
+        f"{context} failed: the arXiv API is not responding properly.\n"
+        f"Error: {error}\n"
+        f"Papers already waiting in the database are still processed; new ones will be picked up by the next "
+        f"successful fetch. Check https://status.arxiv.org if this persists.",
+        title="⚠️ arXiv API error",
+    )

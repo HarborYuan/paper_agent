@@ -18,6 +18,10 @@ MCP server (stdio) that exposes a running [Paper Agent](..) instance to Claude C
 | `set_user_score(paper_id, score)` | Write the user's judgement back (overrides AI score) |
 | `add_paper(arxiv_id_or_url)` | Add + score + summarise a paper |
 | `agent_status()` | Models, thresholds, embedding coverage |
+| `get_bibtex(paper_ids?)` | BibTeX for any arXiv ids (`@inproceedings`/`booktitle` for conferences, `@article`/`journal` otherwise) + `needs_check`; no ids = whole library |
+| `bibtex_venue_hints(paper_ids)` | Read-only: current arXiv comment / journal_ref / DOI, raw |
+| `set_bibtex_status(paper_id, status, venue?, venue_type?, year?, evidence?)` | Write the agent's verdict back (venue stored as written) — `published` (final), `preprint` (re-flagged after 30 days), `unchecked` |
+| `fix_bibtex(bibtex)` | Sync a pasted .bib with the library (no lookups): known-published preprints rewritten, keys kept; returns `needs_check` |
 
 ## Run
 
@@ -36,4 +40,4 @@ uvx --from "git+https://github.com/HarborYuan/paper_agent#subdirectory=mcp_serve
 claude mcp add --scope user paper-agent -- uv run --directory /path/to/paper_agent/mcp_server paper-agent-mcp --base-url http://nas:8000
 ```
 
-Then ask things like *"what did the people in my POI list publish this month"*, *"papers from the last two weeks related to 2608.19556"*, *"summarise this week's report"*, *"score 2608.18607 as 95, I read it"*.
+Then ask things like *"what did the people in my POI list publish this month"*, *"papers from the last two weeks related to 2608.19556"*, *"summarise this week's report"*, *"score 2608.18607 as 95, I read it"*, *"give me the bibtex for 2408.00714"*, *"check which arXiv entries in main.bib have been accepted and fix them"*.

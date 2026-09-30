@@ -5,7 +5,7 @@
   </p>
   <p align="center">
     <a href="https://github.com/HarborYuan/paper_agent/actions/workflows/docker-publish.yml"><img src="https://github.com/HarborYuan/paper_agent/actions/workflows/docker-publish.yml/badge.svg" alt="Docker Build"></a>
-    <img src="https://img.shields.io/badge/version-1.1.0-cyan" alt="Version">
+    <img src="https://img.shields.io/badge/version-1.2.0-cyan" alt="Version">
     <img src="https://img.shields.io/badge/python-3.13+-blue?logo=python&logoColor=white" alt="Python">
     <img src="https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white" alt="FastAPI">
     <img src="https://img.shields.io/badge/React-61DAFB?logo=react&logoColor=black" alt="React">
@@ -27,7 +27,8 @@
 | 🤝 **MCP server for agents** | `mcp_server/` exposes the instance to Claude Code & co.: semantic search, recent papers, people-of-interest lookup (fuzzy names), paper details / full text, reports, and write-back of scores and important people |
 | 🔎 **Semantic search & related papers** | Title+abstract embeddings (voyage-4 via OpenRouter, 512-d): describe what you want instead of guessing title words; every paper page lists its nearest neighbours; reports cluster papers by embedding before the LLM writes the topic section |
 | 📰 **Daily / Weekly / Monthly Reports** | LLM-written trend reports over the selected papers — topic clusters, institution counts vs. previous period, must-read top 5, signals — stored in the app and pushed to Lark right after the digest |
-| 📬 **Notifications** | Pushes daily digest to Lark (飞书) via webhook |
+| 📚 **BibTeX library** | Citation entries for any arXiv paper (paper-page button / API / MCP): `@inproceedings{booktitle}` for conferences, `@article{journal}` for journals and preprints. Agent-driven — the server never guesses venues; the agent verifies unchecked entries (arXiv comment hints, DBLP, OpenReview, ...) and writes the verdict back once, so it is never looked up again. Can sync a whole pasted `.bib`. Cite keys never change |
+| 📬 **Notifications** | Pushes daily digest to Lark (飞书) via webhook; an arXiv API outage (errors / empty feed after retries) is pushed as an alert instead of a misleading "no new papers" |
 | 🌐 **Web UI** | Beautiful dark-theme interface with day-by-day infinite scroll |
 | 🎚️ **Adjustable Threshold** | Filter papers by score with a live slider |
 | 🔄 **Per-Paper Refresh** | Re-summarize any paper on demand |
@@ -44,6 +45,7 @@ Names are reserved for feature milestones; patch releases intentionally have no 
 
 | Version | Name | Highlights |
 |---------|------|------------|
+| **1.2.0** | *Bib Update* | BibTeX library driven by the agent over MCP (`get_bibtex`, `bibtex_venue_hints`, `set_bibtex_status`, `fix_bibtex`): any arXiv paper becomes `@inproceedings{booktitle}` (conference) / `@article{journal}` (journal or arXiv preprint); the server never guesses venues — the agent verifies `needs_check` entries and writes the verdict back once (`published` is final, "still a preprint" re-flagged after 30 days); pasted `.bib` files synced with stable cite keys; BibTeX copy button on the paper page. arXiv API hardening: retries with back-off, error / empty feeds detected, and an outage now pushes a Lark alert instead of the misleading "no new papers" message |
 | **1.1.0** | *Deep Read Update* | Stage-2 reviewer reads agentically: 20k-char triage pass, then ONE optional extended read (120k chars, new `STAGE2_DEEP_TEXT_CHAR_LIMIT`) when the verdict hinges on unseen experiments — `deep_read` + its reason stored and shown in the UI; prompt overhaul: summaries gain `## TL;DR` (single shared extractor now feeds digest / reports / API teasers), writing-craft sections (Teaser Figure, Intro Narrative, Method Writing), an explicit Reading Recommendation verdict, grounding rules ("Not mentioned." instead of guessing), CN 说人话 style with technical terms kept in English; stage-1/stage-2 relevance tiers unified; affiliation prompt gets a canonical list of university short forms |
 | **1.0.4** | — | Follow-up to 1.0.3 after robustness testing on real arXiv data: short papers keep their HTML (structural `<article>` check replaces a length heuristic), legacy ids (`cs/0112017`) try HTML too, unexpanded LaTeXML macros no longer pollute the head of the text, nested `<math>` stops double-emitting |
 | **1.0.3** | — | arXiv HTML (`arxiv.org/html/{id}`) preferred over PDF for full text — reading-order text, LaTeX kept from MathML `alttext`, arXiv page chrome stripped; PDF fallback now streams with a 30 MB cap and parses off the event loop; scheduled run no longer skips papers already sitting as `NEW` (backfills were being stranded) |
@@ -86,6 +88,18 @@ arXiv fetch ─► Stage 1 (cheap model, title+abstract) ─► score ≥ STAGE2
 Every new paper is embedded (title + abstract) during the run through the provider's OpenAI-compatible `/embeddings` endpoint — default `voyageai/voyage-4` truncated to 512 dimensions (≈ $0.001/day; backfilling history ≈ $0.02 per 1k papers). Vectors are stored in the `paperembedding` table (model + dim recorded, so a model switch is detected and shown as "missing" until you Backfill) and served from an in-memory, L2-normalised matrix: brute-force cosine, no vector database. Three things use it: the **Semantic** toggle of the search box, **Related papers** at the bottom of every paper page, and the topic clusters that are pre-computed for reports (k-means, cosine) so the LLM's "Topic Trends" starts from real structure.
 
 `compact=true` (and the POST search by default) returns small agent-friendly records — `id, title, authors, published_at, category, score, user_score, status, main_affiliation, main_company, reason, tldr, has_summary, pdf_url, abs_url` (+ `similarity`) — no full text or raw JSON.
+
+### BibTeX library
+
+Four fields per entry, typed by where the paper appeared:
+
+```bibtex
+@article{yuan2026great,  journal   = {arXiv preprint arXiv:2602.00001}, ...}   % preprint
+@inproceedings{...,      booktitle = {CVPR}, year = {2026}}                     % conference: short name
+@article{...,            journal   = {IEEE TPAMI}, year = {2026}}               % journal: short name if well known, else full name
+```
+
+Freshly fetched arXiv papers are normally not accepted anywhere, so the server never looks venues up. Entries start as `unchecked`; when citing, the agent (MCP) checks every entry in `needs_check` — `bibtex_venue_hints` gives the current arXiv comment / journal_ref ("Accepted to CVPR 2026"), the agent confirms elsewhere if needed — and writes the verdict back with `set_bibtex_status`. `published` is final (never checked again); `preprint` ("checked, not yet") is trusted for 30 days, then flagged again. The venue is stored exactly as the agent writes it; the naming convention (conference short names, short names for well-known journals such as IEEE TPAMI / IJCV, otherwise the full name) is part of the MCP tool descriptions. Cite keys (`lastname` + arXiv year + first title word) are fixed at creation so LaTeX sources keep compiling.
 
 ### Reports
 
@@ -245,6 +259,11 @@ All endpoints are served under the **`/api`** prefix (e.g. `GET /api/papers`) so
 | `GET` | `/api/reports` · `/api/reports/{id}` | List (`?kind=daily\|weekly\|monthly`) / read trend reports |
 | `POST` | `/api/reports/generate` | `{"kind": "weekly", "date": "YYYY-MM-DD"}` — generate or regenerate a report on demand (rate-limited) |
 | `POST` / `DELETE` | `/api/reports/{id}/push` · `/api/reports/{id}` | Push a report to Lark / delete it |
+| `GET` | `/api/bibtex?ids=` | BibTeX for arXiv ids (new ones added as unchecked); no `ids` = whole library. Returns `bibtex`, per-entry status and `needs_check` |
+| `GET` | `/api/bibtex/hints?ids=` | Read-only venue evidence from the current arXiv record (raw comment / journal_ref / DOI) |
+| `PUT` | `/api/bibtex/{id}/status` | `{"status": "published", "venue": "CVPR", "venue_type": "conference", "year": 2026, "evidence"?}` — or `"preprint"` (checked, not yet) / `"unchecked"` (reset) |
+| `GET` / `DELETE` | `/api/bibtex/{id}/entry` | One entry (created on demand) / remove it from the library |
+| `POST` | `/api/bibtex/fix` | `{"bibtex": "..."}` — sync a pasted .bib with the library (no lookups); returns what still `needs_check` |
 | `WS` | `/api/ws/logs` | Live log stream (used by the in-app log viewer) |
 | `GET` | `/health` · `/api/health` | Liveness probe |
 

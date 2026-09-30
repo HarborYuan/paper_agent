@@ -112,3 +112,24 @@ class PaperEmbedding(SQLModel, table=True):
     dim: int
     vector: bytes = Field(sa_column=Column(LargeBinary, nullable=False))
     created_at: datetime = Field(default_factory=datetime.now)
+
+
+class BibEntry(SQLModel, table=True):
+    """
+    The user's BibTeX library: one entry per arXiv paper (independent of the scoring pipeline, so any
+    arXiv id can be cited). No automatic venue lookup — the agent checks venues (MCP) and writes the
+    verdict back; see services/bibtex_service.py.
+    """
+    paper_id: str = Field(primary_key=True)         # arXiv id, no version
+    cite_key: str = Field(index=True, unique=True)  # stable across venue updates
+    title: str
+    authors: str                                    # JSON list
+    arxiv_year: int
+    status: str = "unchecked"                       # unchecked | preprint (checked, not published) | published
+    venue_type: Optional[str] = None                # conference | journal (published only)
+    venue: Optional[str] = None                     # "CVPR", "IEEE TPAMI", or a full journal name
+    venue_year: Optional[int] = None
+    evidence: Optional[str] = None                  # where the agent confirmed it (URL / note)
+    checked_at: Optional[datetime] = None           # when the agent last checked
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)

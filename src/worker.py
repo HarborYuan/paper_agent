@@ -6,9 +6,9 @@ from sqlmodel import Session, select
 from src.database import engine
 from src.config import settings
 from src.models import Paper, Author
-from src.services.arxiv import ArxivFetcher
+from src.services.arxiv import ArxivFetcher, ArxivAPIError
 from src.services.llm import LLMService
-from src.services.notifier import get_notifier
+from src.services.notifier import get_notifier, alert_arxiv_failure
 from src.services.paper_views import summary_tldr
 from src.services.pdf_service import pdf_service
 from src.services.settings_service import get_llm_config
@@ -169,7 +169,16 @@ async def run_worker():
     # 1. Fetch
     fetcher = ArxivFetcher(categories=settings.ARXIV_CATEGORIES)
     # 2000 for MVP; usually good enough
-    fetched_papers = await asyncio.to_thread(fetcher.fetch_papers, max_results=PAPER_SYNC_LIMIT)
+    fetch_error = None
+    try:
+        fetched_papers = await asyncio.to_thread(fetcher.fetch_papers, max_results=PAPER_SYNC_LIMIT)
+    except ArxivAPIError as e:
+        # Don't mistake an outage for a quiet day: alert, then still work through pending papers
+        fetch_error = e
+        fetched_papers = []
+        await logger.log(f"arXiv fetch failed: {e}")
+        if not await alert_arxiv_failure("Daily arXiv fetch", e):
+            await logger.log("arXiv failure alert not sent (no notifier configured or push failed).")
     new_papers = fetcher.filter_new_papers(fetched_papers)
     fetcher.save_papers(new_papers)
 
@@ -194,9 +203,10 @@ async def run_worker():
         await logger.log("No new papers retrieved.")
         reports = await run_scheduled_reports(run_started_at.date(), None, log=logger.log)
         if notifier:
-            await notifier.send_message(
-                "😴 No new papers retrieved today. Taking a break!"
-            )
+            if not fetch_error:  # the outage alert already went out; "taking a break" would be misleading
+                await notifier.send_message(
+                    "😴 No new papers retrieved today. Taking a break!"
+                )
             if reports and await notifier.send_messages([report_to_lark(r) for r in reports]):
                 for r in reports:
                     mark_pushed(r.id)

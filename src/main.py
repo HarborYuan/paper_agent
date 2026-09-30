@@ -33,6 +33,8 @@ from src.models import Report
 from src.services import embedding_service
 from src.services.paper_views import compact_paper
 from src.services import author_index as author_index_service
+from src.services import bibtex_service
+from src.services.arxiv import ArxivAPIError
 
 
 
@@ -990,6 +992,73 @@ def delete_report(report_id: int, session: Session = Depends(get_session)):
     session.delete(rep)
     session.commit()
     return {"deleted": report_id}
+
+
+# ---------------------------------------------------------------------------
+# BibTeX library (agent-driven: no automatic venue lookup)
+# ---------------------------------------------------------------------------
+def _bib_payload(entries, extra=None):
+    out = {"bibtex": bibtex_service.export(entries), "entries": [bibtex_service.entry_dict(e) for e in entries],
+           "needs_check": [e.paper_id for e in entries if bibtex_service.needs_check(e)]}
+    out.update(extra or {})
+    return out
+
+@api.get("/bibtex")
+def get_bibtex(ids: Optional[str] = Query(None, description="Comma-separated arXiv ids (added to the library if new). Omit for the whole library."),
+               session: Session = Depends(get_session)):
+    """BibTeX for the given papers, or the whole library. `needs_check` = entries whose venue the agent should verify."""
+    if not ids:
+        return _bib_payload(bibtex_service.list_entries(session))
+    res = bibtex_service.get_entries(session, ids.split(","))
+    return _bib_payload(res["entries"], {"missing": res["missing"], "warnings": res["warnings"]})
+
+@api.get("/bibtex/hints")
+def bibtex_hints(ids: str = Query(..., description="Comma-separated arXiv ids"), session: Session = Depends(get_session)):
+    """Read-only venue evidence from the current arXiv record (raw comment / journal_ref / DOI) for the agent to interpret."""
+    try:
+        return {"hints": bibtex_service.hints(session, ids.split(","))}
+    except ArxivAPIError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+@api.get("/bibtex/{paper_id:path}/entry")
+def get_bibtex_entry(paper_id: str, session: Session = Depends(get_session)):
+    res = bibtex_service.get_entries(session, [paper_id])
+    if not res["entries"]:
+        raise HTTPException(status_code=404, detail=f"arXiv paper {paper_id} not found")
+    return {**bibtex_service.entry_dict(res["entries"][0]), "warnings": res["warnings"]}
+
+class BibStatusUpdate(SQLModel):
+    status: str = "published"          # published | preprint (checked, not yet) | unchecked (reset)
+    venue: Optional[str] = None        # published: stored as given ("CVPR", "IEEE TPAMI", full journal name)
+    venue_type: Optional[str] = None   # conference | journal (required for published)
+    year: Optional[int] = None
+    evidence: Optional[str] = None     # URL / note on where it was confirmed
+
+@api.put("/bibtex/{paper_id:path}/status")
+def set_bibtex_status(paper_id: str, update: BibStatusUpdate, session: Session = Depends(get_session)):
+    """Write the agent's venue verdict back. Published entries are final; 'preprint' is trusted for 30 days."""
+    try:
+        entry = bibtex_service.set_status(session, paper_id, update.status, update.venue, update.venue_type,
+                                          update.year, update.evidence)
+    except bibtex_service.BibUpdateError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return bibtex_service.entry_dict(entry)
+
+@api.delete("/bibtex/{paper_id:path}/entry")
+def delete_bibtex_entry(paper_id: str, session: Session = Depends(get_session)):
+    if not bibtex_service.delete_entry(session, paper_id):
+        raise HTTPException(status_code=404, detail="Not in the BibTeX library")
+    return {"deleted": paper_id}
+
+class BibFixRequest(SQLModel):
+    bibtex: str
+
+@api.post("/bibtex/fix")
+def fix_bibtex(req: BibFixRequest, session: Session = Depends(get_session)):
+    """Sync a pasted .bib with the library (no lookups); lists what the agent still needs to check."""
+    return bibtex_service.fix_bibtex(session, req.bibtex)
 
 
 @api.get("/health")

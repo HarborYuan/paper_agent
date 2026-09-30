@@ -34,7 +34,11 @@ mcp = FastMCP(
         "recent_papers for 'what came out lately', papers_by_people for people of interest, get_paper to read "
         "one paper in depth (summary, scoring rationale, optional full text), related_papers for neighbours, "
         "list_reports/get_report for trend reports. set_user_score and mark_people_important write the user's "
-        "feedback back so future scoring improves. Paper ids are arXiv ids like 2608.19556."
+        "feedback back so future scoring improves. BibTeX: get_bibtex returns citation entries for any arXiv id; "
+        "the server never looks up venues itself — for entries in `needs_check` YOU verify whether the paper was "
+        "accepted (bibtex_venue_hints, then web sources if needed) and write the verdict back with set_bibtex_status, "
+        "so it never has to be checked again; fix_bibtex syncs a whole .bib file with the library. "
+        "Paper ids are arXiv ids like 2608.19556."
     ),
 )
 
@@ -67,6 +71,13 @@ def _post(path: str, body: Optional[Dict[str, Any]] = None, **params: Any) -> An
     params = {k: v for k, v in params.items() if v is not None}
     with _client() as c:
         r = c.post(path, json=body, params=params)
+        _raise_for(r)
+        return r.json()
+
+
+def _put(path: str, body: Optional[Dict[str, Any]] = None) -> Any:
+    with _client() as c:
+        r = c.put(path, json=body)
         _raise_for(r)
         return r.json()
 
@@ -257,6 +268,84 @@ def agent_status() -> Dict[str, Any]:
         "models": llm.get("models"), "thresholds": llm.get("thresholds"), "provider": llm.get("provider"),
         "embeddings": {k: emb.get(k) for k in ("model", "dim", "total_papers", "embedded", "missing", "index_size")},
     }
+
+
+# ---------------------------------------------------------------------------
+# Tools — BibTeX (agent-driven: the server stores verdicts, the agent checks venues)
+# ---------------------------------------------------------------------------
+_BIB_WORKFLOW = """
+Workflow when citing: get_bibtex(ids) -> for each id in `needs_check` (never checked, or "still a preprint"
+checked > 30 days ago) call bibtex_venue_hints; if the arXiv comment / journal_ref is not conclusive, check
+DBLP / OpenReview / the proceedings / Semantic Scholar yourself -> set_bibtex_status(...) -> get_bibtex again.
+Published entries are final and never need checking again.
+Naming: conferences by short name (CVPR, ICCV, ECCV, NeurIPS, ICLR, ICML, ACL, EMNLP, AAAI, ...; workshops as
+"CVPR Workshops", "Findings of EMNLP"); well-known journals by short name (IEEE TPAMI, IJCV, IEEE TIP, IEEE TMM,
+IEEE TCSVT, IEEE TNNLS, IEEE TVCG, IEEE RA-L, ACM TOG, JMLR, TMLR, TACL); any other journal by its full name.
+The venue is stored exactly as you write it — follow this convention.
+Year = year of the venue (ICLR 2025), not of the arXiv upload.
+"""
+
+
+def _bib_entries_brief(entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    keep = ("paper_id", "cite_key", "title", "status", "needs_check", "venue_type", "venue", "year", "checked_at")
+    return [{k: e.get(k) for k in keep} for e in entries]
+
+
+@mcp.tool()
+def get_bibtex(paper_ids: Optional[List[str]] = None) -> Dict[str, Any]:
+    """
+    BibTeX for arXiv papers (ids or URLs) — any arXiv paper, not only scored ones; new ones are added to the
+    library as unchecked preprints. Omit `paper_ids` for the whole library. Entries render as
+    @inproceedings{booktitle} (conference), @article{journal} (journal) or @article{journal = {arXiv preprint ...}}.
+    Returns `bibtex` (ready to paste), per-entry status, `needs_check` (ids whose venue you should verify),
+    `missing` ids and `warnings`.
+    """
+    d = _get("/api/bibtex", ids=",".join(paper_ids) if paper_ids else None)
+    d["entries"] = _bib_entries_brief(d.get("entries", []))
+    return d
+
+
+@mcp.tool()
+def bibtex_venue_hints(paper_ids: List[str]) -> Dict[str, Any]:
+    """
+    Read-only venue evidence from the *current* arXiv record: the authors' comment (e.g. "Accepted to CVPR 2026",
+    usually added with the camera-ready version), journal_ref, DOI and latest version date, raw — interpret them
+    yourself ("submitted to" / "under review" is not an acceptance) and confirm before writing back. Nothing is stored.
+    """
+    return _get("/api/bibtex/hints", ids=",".join(paper_ids))
+
+
+_SET_STATUS_DOC = """
+    Write your venue verdict for one paper back to the library (creates the entry if needed).
+    status="published": venue, venue_type ("conference" | "journal") and year required —
+      final, never flagged again. status="preprint": you checked and it is not published yet (re-flagged after
+      30 days). status="unchecked": reset. `evidence`: URL or short note on where you confirmed it.
+    """ + _BIB_WORKFLOW
+
+
+@mcp.tool(description=_SET_STATUS_DOC)
+def set_bibtex_status(
+    paper_id: str,
+    status: str = "published",
+    venue: Optional[str] = None,
+    venue_type: Optional[str] = None,
+    year: Optional[int] = None,
+    evidence: Optional[str] = None,
+) -> Dict[str, Any]:
+    return _put(f"/api/bibtex/{paper_id}/status", {"status": status, "venue": venue, "venue_type": venue_type,
+                                                    "year": year, "evidence": evidence})
+
+
+@mcp.tool()
+def fix_bibtex(bibtex: str) -> Dict[str, Any]:
+    """
+    Sync a whole .bib file (pass its text) with the library, no lookups: arXiv-preprint entries whose paper is
+    known as published are rewritten (cite key, title and author text kept; conferences become
+    @inproceedings/booktitle); everything else is left untouched. Returns the new `bibtex`, `changes`,
+    `needs_check` (verify these, set_bibtex_status each, then call fix_bibtex again) and `no_arxiv_id`
+    (preprint entries without an arXiv id — handle by hand).
+    """
+    return _post("/api/bibtex/fix", {"bibtex": bibtex})
 
 
 # ---------------------------------------------------------------------------

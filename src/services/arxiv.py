@@ -1,13 +1,99 @@
 import feedparser
+import httpx
 import json
-import urllib.parse
+import re
+import time
 from datetime import datetime
-from typing import List
+from typing import Dict, List, Optional
 from sqlmodel import Session, select
 from src.models import Paper
 from src.database import engine
 
-ARXIV_API_URL = "http://export.arxiv.org/api/query"
+ARXIV_API_URL = "https://export.arxiv.org/api/query"
+API_TIMEOUT = 60.0
+# Seconds to wait before each retry. arXiv asks for >= 3 s between calls; its API also has
+# transient bad spells (5xx, empty feeds), so the daily fetch backs off generously.
+RETRY_DELAYS = (5, 20, 60)
+ID_LIST_CHUNK = 100
+
+
+class ArxivAPIError(RuntimeError):
+    """The arXiv export API failed (network / HTTP error, error feed, or an empty result) after retries."""
+
+
+def _strip_version(arxiv_id: str) -> str:
+    return re.sub(r'v\d+$', '', arxiv_id)
+
+
+def query_api(params: Dict, *, require_entries: bool = True, retry_delays=None) -> feedparser.FeedParserDict:
+    """
+    GET the arXiv export API and parse the Atom feed, retrying transient failures.
+    Raises ArxivAPIError when every attempt failed. `require_entries` treats an empty feed as a
+    failure — right for the category listing (which is never legitimately empty), wrong for id lookups.
+    """
+    delays = RETRY_DELAYS if retry_delays is None else retry_delays
+    last_error = "unknown error"
+    for attempt in range(len(delays) + 1):
+        if attempt:
+            time.sleep(delays[attempt - 1])
+        try:
+            with httpx.Client(follow_redirects=True, timeout=API_TIMEOUT,
+                              headers={"User-Agent": "paper-agent (https://github.com/HarborYuan/paper_agent)"}) as client:
+                resp = client.get(ARXIV_API_URL, params=params)
+        except httpx.HTTPError as e:
+            last_error = f"{type(e).__name__}: {e}"
+            print(f"arXiv API attempt {attempt + 1} failed: {last_error}")
+            continue
+        if resp.status_code != 200:
+            last_error = f"HTTP {resp.status_code}: {resp.text[:200].strip()}"
+            print(f"arXiv API attempt {attempt + 1} failed: {last_error}")
+            continue
+        feed = feedparser.parse(resp.text)
+        # The API reports bad queries as a single entry whose id points at /api/errors
+        errors = [e for e in feed.entries if "/api/errors" in e.get("id", "")]
+        if errors:
+            raise ArxivAPIError(f"arXiv API error: {errors[0].get('summary', errors[0].get('title', ''))}".strip())
+        if feed.bozo and not feed.entries:
+            last_error = f"unparseable feed: {feed.get('bozo_exception')}"
+            print(f"arXiv API attempt {attempt + 1} failed: {last_error}")
+            continue
+        if require_entries and not feed.entries:
+            last_error = "empty feed (0 entries)"
+            print(f"arXiv API attempt {attempt + 1} failed: {last_error}")
+            continue
+        return feed
+    raise ArxivAPIError(f"arXiv API failed after {len(delays) + 1} attempts: {last_error}")
+
+
+def fetch_metadata(paper_ids: List[str], retry_delays=None) -> Dict[str, Dict]:
+    """
+    Title / authors / comment / journal_ref / dates for specific arXiv ids via the API (id_list),
+    keyed by version-less id. Unknown ids are simply absent. Raises ArxivAPIError.
+    """
+    ids = list(dict.fromkeys(_strip_version(i) for i in paper_ids if i))
+    out: Dict[str, Dict] = {}
+    for n in range(0, len(ids), ID_LIST_CHUNK):
+        if n:
+            time.sleep(3)
+        chunk = ids[n:n + ID_LIST_CHUNK]
+        feed = query_api({"id_list": ",".join(chunk), "max_results": len(chunk)},
+                         require_entries=False, retry_delays=retry_delays)
+        for e in feed.entries:
+            pid = _strip_version(e.id.split("/abs/")[-1])
+            if pid not in chunk or not e.get("title"):
+                continue
+            out[pid] = {
+                "id": pid,
+                "title": " ".join(e.title.split()),
+                "authors": [a.name.replace(":", "").strip() for a in e.get("authors", []) if a.get("name")],
+                "comment": " ".join((e.get("arxiv_comment") or "").split()) or None,
+                "journal_ref": " ".join((e.get("arxiv_journal_ref") or "").split()) or None,
+                "doi": e.get("arxiv_doi"),
+                "published": datetime(*e.published_parsed[:6]) if e.get("published_parsed") else None,
+                "updated": datetime(*e.updated_parsed[:6]) if e.get("updated_parsed") else None,
+            }
+    return out
+
 
 class ArxivFetcher:
     def __init__(self, categories: List[str] = ["cs.CV", "cs.CL", "cs.AI"]):
@@ -33,20 +119,16 @@ class ArxivFetcher:
             "max_results": max_results,
         }
         
-        url = f"{ARXIV_API_URL}?{urllib.parse.urlencode(query_params)}"
-        print(f"Fetching from arXiv: {url}")
-        
-        feed = feedparser.parse(url)
+        print(f"Fetching from arXiv: {ARXIV_API_URL} {query_params}")
+        # Raises ArxivAPIError if the API is down / returns nothing; run_worker alerts on it
+        feed = query_api(query_params)
         
         papers = []
         for entry in feed.entries:
             # Extract ID: http://arxiv.org/abs/2101.12345v1 -> 2101.12345v1 or just 2101.12345
             # User typically wants versioned or unversioned. The atom ID is usually a URL.
             # We will use the ID string from the ID field.
-            arxiv_id = entry.id.split("/abs/")[-1]
-            import re
-            # Strip version suffix (e.g., v1, v2)
-            arxiv_id = re.sub(r'v\d+$', '', arxiv_id)
+            arxiv_id = _strip_version(entry.id.split("/abs/")[-1])
             
             # Helper to safely get attributes
             title = entry.title.replace("\n", " ")

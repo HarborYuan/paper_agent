@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import axios from 'axios';
-import { ArrowLeft, Calendar, Users, ExternalLink, Star, Building2, Tag, RefreshCw } from 'lucide-react';
+import { ArrowLeft, Calendar, Users, ExternalLink, Star, Building2, Tag, RefreshCw, Quote, Check } from 'lucide-react';
 import { format } from 'date-fns';
 import ReactMarkdown from 'react-markdown';
 import ScoreBreakdown from '../components/ScoreBreakdown';
@@ -16,6 +16,25 @@ const PaperDetail = () => {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     const [refreshing, setRefreshing] = useState(false);
+    const [bibState, setBibState] = useState('idle'); // idle | loading | copied | error
+    const [bibJournal, setBibJournal] = useState(null);
+
+    // Adds the paper to the BibTeX library (venue auto-detected) and copies the entry
+    const handleCopyBibtex = async () => {
+        if (bibState === 'loading') return;
+        setBibState('loading');
+        try {
+            const res = await axios.get(`${API_URL}/bibtex/${id}/entry`);
+            await navigator.clipboard.writeText(res.data.bibtex);
+            setBibJournal(res.data.status === 'published' ? `${res.data.venue} ${res.data.year}` : null);
+            setBibState('copied');
+            setTimeout(() => setBibState('idle'), 2500);
+        } catch (err) {
+            console.error(err);
+            setBibState('error');
+            setTimeout(() => setBibState('idle'), 2500);
+        }
+    };
 
     useEffect(() => {
         const fetchPaper = async () => {
@@ -177,6 +196,18 @@ const PaperDetail = () => {
                                     View PDF
                                 </a>
                             )}
+                            <button
+                                onClick={handleCopyBibtex}
+                                disabled={bibState === 'loading'}
+                                className="flex items-center gap-2 text-cyan-400 hover:text-cyan-300 hover:underline transition-colors disabled:cursor-wait"
+                                title="Copy BibTeX (with the venue once it has been confirmed as published)"
+                            >
+                                {bibState === 'copied' ? <Check size={16} /> : <Quote size={16} />}
+                                {bibState === 'loading' ? 'Loading…'
+                                    : bibState === 'copied' ? `Copied${bibJournal ? ` (${bibJournal})` : ''}`
+                                    : bibState === 'error' ? 'BibTeX failed'
+                                    : 'BibTeX'}
+                            </button>
                             {paper.main_affiliation && (
                                 <div className="flex items-center gap-2">
                                     <Building2 size={16} className="text-purple-400" />
