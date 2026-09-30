@@ -117,7 +117,8 @@ def needs_check(entry: BibEntry, now: Optional[datetime] = None) -> bool:
 
 def render(entry: BibEntry) -> str:
     authors = json.loads(entry.authors or "[]")
-    return format_entry(entry.cite_key, escape_latex(entry.title), " and ".join(escape_latex(a) for a in authors),
+    # Double braces keep the title's capitalisation (SAM, OMG-Seg, 3D) under styles that lowercase titles
+    return format_entry(entry.cite_key, f"{{{escape_latex(entry.title)}}}", " and ".join(escape_latex(a) for a in authors),
                         entry.venue_type if is_published(entry) else None, escape_latex(venue_of(entry)), year_of(entry))
 
 

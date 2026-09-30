@@ -5,7 +5,7 @@
   </p>
   <p align="center">
     <a href="https://github.com/HarborYuan/paper_agent/actions/workflows/docker-publish.yml"><img src="https://github.com/HarborYuan/paper_agent/actions/workflows/docker-publish.yml/badge.svg" alt="Docker Build"></a>
-    <img src="https://img.shields.io/badge/version-1.2.0-cyan" alt="Version">
+    <img src="https://img.shields.io/badge/version-1.2.1-cyan" alt="Version">
     <img src="https://img.shields.io/badge/python-3.13+-blue?logo=python&logoColor=white" alt="Python">
     <img src="https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white" alt="FastAPI">
     <img src="https://img.shields.io/badge/React-61DAFB?logo=react&logoColor=black" alt="React">
@@ -45,6 +45,7 @@ Names are reserved for feature milestones; patch releases intentionally have no 
 
 | Version | Name | Highlights |
 |---------|------|------------|
+| **1.2.1** | — | BibTeX titles wrapped in double braces (`title = {{...}}`) so styles that lowercase titles keep acronyms like SAM / OMG-Seg / 3D; MCP install docs now recommend pinning to a release tag via `uvx --from git+...@vX.Y.Z` |
 | **1.2.0** | *Bib Update* | BibTeX library driven by the agent over MCP (`get_bibtex`, `bibtex_venue_hints`, `set_bibtex_status`, `fix_bibtex`): any arXiv paper becomes `@inproceedings{booktitle}` (conference) / `@article{journal}` (journal or arXiv preprint); the server never guesses venues — the agent verifies `needs_check` entries and writes the verdict back once (`published` is final, "still a preprint" re-flagged after 30 days); pasted `.bib` files synced with stable cite keys; BibTeX copy button on the paper page. arXiv API hardening: retries with back-off, error / empty feeds detected, and an outage now pushes a Lark alert instead of the misleading "no new papers" message |
 | **1.1.0** | *Deep Read Update* | Stage-2 reviewer reads agentically: 20k-char triage pass, then ONE optional extended read (120k chars, new `STAGE2_DEEP_TEXT_CHAR_LIMIT`) when the verdict hinges on unseen experiments — `deep_read` + its reason stored and shown in the UI; prompt overhaul: summaries gain `## TL;DR` (single shared extractor now feeds digest / reports / API teasers), writing-craft sections (Teaser Figure, Intro Narrative, Method Writing), an explicit Reading Recommendation verdict, grounding rules ("Not mentioned." instead of guessing), CN 说人话 style with technical terms kept in English; stage-1/stage-2 relevance tiers unified; affiliation prompt gets a canonical list of university short forms |
 | **1.0.4** | — | Follow-up to 1.0.3 after robustness testing on real arXiv data: short papers keep their HTML (structural `<article>` check replaces a length heuristic), legacy ids (`cs/0112017`) try HTML too, unexpanded LaTeXML macros no longer pollute the head of the text, nested `<math>` stops double-emitting |
@@ -99,7 +100,7 @@ Four fields per entry, typed by where the paper appeared:
 @article{...,            journal   = {IEEE TPAMI}, year = {2026}}               % journal: short name if well known, else full name
 ```
 
-Freshly fetched arXiv papers are normally not accepted anywhere, so the server never looks venues up. Entries start as `unchecked`; when citing, the agent (MCP) checks every entry in `needs_check` — `bibtex_venue_hints` gives the current arXiv comment / journal_ref ("Accepted to CVPR 2026"), the agent confirms elsewhere if needed — and writes the verdict back with `set_bibtex_status`. `published` is final (never checked again); `preprint` ("checked, not yet") is trusted for 30 days, then flagged again. The venue is stored exactly as the agent writes it; the naming convention (conference short names, short names for well-known journals such as IEEE TPAMI / IJCV, otherwise the full name) is part of the MCP tool descriptions. Cite keys (`lastname` + arXiv year + first title word) are fixed at creation so LaTeX sources keep compiling.
+Freshly fetched arXiv papers are normally not accepted anywhere, so the server never looks venues up. Entries start as `unchecked`; when citing, the agent (MCP) checks every entry in `needs_check` — `bibtex_venue_hints` gives the current arXiv comment / journal_ref ("Accepted to CVPR 2026"), the agent confirms elsewhere if needed — and writes the verdict back with `set_bibtex_status`. `published` is final (never checked again); `preprint` ("checked, not yet") is trusted for 30 days, then flagged again. The venue is stored exactly as the agent writes it; the naming convention (conference short names, short names for well-known journals such as IEEE TPAMI / IJCV, otherwise the full name) is part of the MCP tool descriptions. Titles are wrapped in double braces (`title = {{...}}`) so styles that lowercase titles keep SAM / OMG-Seg / 3D intact; `fix_bibtex` keeps the title text of a pasted entry as written. Cite keys (`lastname` + arXiv year + first title word) are fixed at creation so LaTeX sources keep compiling.
 
 ### Reports
 
@@ -271,11 +272,13 @@ All endpoints are served under the **`/api`** prefix (e.g. `GET /api/papers`) so
 
 ## 🤝 MCP server (agents / Claude Code)
 
-`mcp_server/` is a small separate package (`paper-agent-mcp`, stdio) with explicit tools over the API — see [`mcp_server/README.md`](mcp_server/README.md) for the tool list. Register it in Claude Code:
+`mcp_server/` is a small separate package (`paper-agent-mcp`, stdio) with explicit tools over the API — see [`mcp_server/README.md`](mcp_server/README.md) for the tool list. Register it in Claude Code, pinned to the release that matches your server:
 
 ```bash
-claude mcp add --scope user paper-agent -- uv run --directory /path/to/paper_agent/mcp_server paper-agent-mcp --base-url http://nas:8000
+claude mcp add --scope user paper-agent -- uvx --from "git+https://github.com/HarborYuan/paper_agent@v1.2.0#subdirectory=mcp_server" paper-agent-mcp --base-url http://nas:8000
 ```
+
+(To hack on the MCP server itself, register `uv run --directory /path/to/paper_agent/mcp_server paper-agent-mcp ...` instead — see its README.)
 
 Typical asks: *"what did the people in my POI list publish this month"* (`papers_by_people`), *"papers from the last two weeks related to 2608.19556"* (`search_papers` with seeds), *"read 2608.18607 for me"* (`get_paper` with text), *"summarise this week's report"* (`list_reports` / `get_report`), *"mark 2608.18607 as 95, I read it"* (`set_user_score`).
 

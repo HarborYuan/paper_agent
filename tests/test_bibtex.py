@@ -52,7 +52,7 @@ def test_render_by_type(session, monkeypatch):
     e = b.get_entries(session, ["https://arxiv.org/abs/2602.00001v3"])["entries"][0]
     assert b.render(e) == (
         "@article{yuan2026seg,\n"
-        "  title   = {Seg \\& Track: 100\\% Better},\n"
+        "  title   = {{Seg \\& Track: 100\\% Better}},\n"
         "  author  = {Haobo Yuan and Ming-Hsuan Yang},\n"
         "  journal = {arXiv preprint arXiv:2602.00001},\n"
         "  year    = {2026}\n"
@@ -60,7 +60,7 @@ def test_render_by_type(session, monkeypatch):
     e = b.set_status(session, "2602.00001", "published", "CVPR", "conference", 2027)
     assert b.render(e) == (
         "@inproceedings{yuan2026seg,\n"
-        "  title     = {Seg \\& Track: 100\\% Better},\n"
+        "  title     = {{Seg \\& Track: 100\\% Better}},\n"
         "  author    = {Haobo Yuan and Ming-Hsuan Yang},\n"
         "  booktitle = {CVPR},\n"
         "  year      = {2027}\n"
