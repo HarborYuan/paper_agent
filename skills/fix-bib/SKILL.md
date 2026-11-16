@@ -99,7 +99,7 @@ Every paper entry ends up with **exactly four fields** — title, author, bookti
 ```bibtex
 @inproceedings{kirillov2023segment,
   title     = {Segment Anything},
-  author    = {Kirillov, Alexander and Mintun, Eric and Ravi, Nikhila},
+  author    = {Kirillov, Alexander and Mintun, Eric and Ravi, Nikhila and Mao, Hanzi and Rolland, Chloe and Gustafson, Laura and Xiao, Tete and Whitehead, Spencer and Berg, Alexander C. and Lo, Wan-Yen and Doll{\'a}r, Piotr and Girshick, Ross},
   booktitle = {ICCV},
   year      = {2023}
 }
