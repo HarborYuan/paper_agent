@@ -28,7 +28,9 @@ COPY docker/root/ /
 WORKDIR /app
 
 # Copy application code
-COPY pyproject.toml uv.lock README.md .env.example ./
+# .python-version pins the interpreter uv downloads; without it uv takes the newest CPython that
+# satisfies requires-python, which may have no wheels yet for compiled dependencies (greenlet)
+COPY pyproject.toml uv.lock .python-version README.md .env.example ./
 COPY src/ ./src/
 # Copy built frontend
 COPY --from=frontend-builder /web/dist ./frontend/dist
