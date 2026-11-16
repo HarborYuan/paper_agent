@@ -14,6 +14,11 @@ Four fields per entry, typed by where it appeared:
     conference  @inproceedings{key, title, author, booktitle = {CVPR}, year}
     journal     @article{key, title, author, journal = {IEEE TPAMI}, year}
 
+Authors: an entry starts with the arXiv author list. The official version can differ (authors added,
+names changed, order changed), so with a published verdict the agent may also write the author list of
+the official version; once it is there, it wins — in rendered entries and when `fix_bibtex` rewrites a
+pasted entry. Without it the arXiv list (library) / the pasted author text (fix_bibtex) is used.
+
 The venue name and type are stored exactly as the agent writes them — the naming convention
 (conference short names, well-known journal short names, otherwise full names) lives in the MCP
 tool descriptions. Cite keys never change once assigned, so LaTeX sources keep compiling when an
@@ -24,7 +29,7 @@ from __future__ import annotations
 import json
 import re
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Dict, Iterable, List, Optional
 
@@ -83,15 +88,20 @@ def escape_latex(text: str) -> str:
     return re.sub(r"(?<!\\)([&%#])", r"\\\1", text)
 
 
+def format_raw(kind: str, field: str, key: str, title: str, author: str, venue: str, year: str) -> str:
+    """The four-field layout; values are written as given, delimiters included (`{...}`, `"..."`, a macro)."""
+    return (f"@{kind}{{{key},\n"
+            f"  title{' ' * (len(field) - 5)} = {title},\n"
+            f"  author{' ' * (len(field) - 6)} = {author},\n"
+            f"  {field} = {venue},\n"
+            f"  year{' ' * (len(field) - 4)} = {year}\n"
+            f"}}")
+
+
 def format_entry(key: str, title: str, author: str, venue_type: Optional[str], venue: str, year) -> str:
     """conference -> @inproceedings + booktitle; journal / preprint -> @article + journal."""
     kind, field = ("inproceedings", "booktitle") if venue_type == "conference" else ("article", "journal")
-    return (f"@{kind}{{{key},\n"
-            f"  title{' ' * (len(field) - 5)} = {{{title}}},\n"
-            f"  author{' ' * (len(field) - 6)} = {{{author}}},\n"
-            f"  {field} = {{{venue}}},\n"
-            f"  year{' ' * (len(field) - 4)} = {{{year}}}\n"
-            f"}}")
+    return format_raw(kind, field, key, f"{{{title}}}", f"{{{author}}}", f"{{{venue}}}", f"{{{year}}}")
 
 
 def is_published(entry: BibEntry) -> bool:
@@ -106,6 +116,13 @@ def year_of(entry: BibEntry) -> int:
     return entry.venue_year if is_published(entry) and entry.venue_year else entry.arxiv_year
 
 
+def authors_of(entry: BibEntry) -> List[str]:
+    """The official version's author list once the agent has written it for a published entry, else arXiv's."""
+    if is_published(entry) and entry.published_authors:
+        return json.loads(entry.published_authors)
+    return json.loads(entry.authors or "[]")
+
+
 def needs_check(entry: BibEntry, now: Optional[datetime] = None) -> bool:
     """unchecked, or 'still a preprint' older than RECHECK_DAYS. Published entries are final."""
     if entry.status == "published":
@@ -116,7 +133,7 @@ def needs_check(entry: BibEntry, now: Optional[datetime] = None) -> bool:
 
 
 def render(entry: BibEntry) -> str:
-    authors = json.loads(entry.authors or "[]")
+    authors = authors_of(entry)
     # Double braces keep the title's capitalisation (SAM, OMG-Seg, 3D) under styles that lowercase titles
     return format_entry(entry.cite_key, f"{{{escape_latex(entry.title)}}}", " and ".join(escape_latex(a) for a in authors),
                         entry.venue_type if is_published(entry) else None, escape_latex(venue_of(entry)), year_of(entry))
@@ -128,6 +145,8 @@ def entry_dict(entry: BibEntry) -> Dict:
         "status": entry.status, "needs_check": needs_check(entry),
         "venue_type": entry.venue_type if is_published(entry) else "preprint",
         "venue": venue_of(entry), "year": year_of(entry), "evidence": entry.evidence,
+        "authors": authors_of(entry),
+        "authors_source": "published" if is_published(entry) and entry.published_authors else "arxiv",
         "checked_at": entry.checked_at.isoformat() if entry.checked_at else None,
         "bibtex": render(entry),
     }
@@ -224,10 +243,12 @@ class BibUpdateError(ValueError):
 
 def set_status(session: Session, paper_id: str, status: str, venue: Optional[str] = None,
                venue_type: Optional[str] = None, year: Optional[int] = None,
-               evidence: Optional[str] = None) -> BibEntry:
+               evidence: Optional[str] = None, authors: Optional[List[str]] = None) -> BibEntry:
     """
     Write the agent's verdict back.
       published  — needs venue, venue_type (conference | journal) and year; stored as given. Final.
+                   `authors`: the official version's author list, in order — from then on it replaces
+                   the arXiv list. Omitted: an earlier official list is kept, else arXiv's is used.
       preprint   — checked, not published yet; trusted for RECHECK_DAYS.
       unchecked  — reset.
     Creates the entry if it is not in the library yet. Raises BibUpdateError / LookupError.
@@ -247,10 +268,15 @@ def set_status(session: Session, paper_id: str, status: str, venue: Optional[str
             raise BibUpdateError("published needs venue and year")
         if venue_type not in VENUE_TYPES:
             raise BibUpdateError(f"published needs venue_type: one of {VENUE_TYPES}")
+        if authors is not None:
+            names = [" ".join(a.split()) for a in authors if isinstance(a, str)]
+            if not names or len(names) != len(authors) or not all(names):
+                raise BibUpdateError("authors must be a non-empty list of names, in the order of the official version")
+            entry.published_authors = json.dumps(names, ensure_ascii=False)
         entry.venue, entry.venue_type, entry.venue_year = " ".join(venue.split()), venue_type, int(year)
         entry.checked_at = now
     else:
-        entry.venue = entry.venue_type = entry.venue_year = None
+        entry.venue = entry.venue_type = entry.venue_year = entry.published_authors = None
         entry.checked_at = now if status == "preprint" else None
     entry.status = status
     entry.evidence = evidence if status != "unchecked" else None
@@ -279,7 +305,8 @@ class ParsedEntry:
     end: int
     type: str
     key: str
-    fields: Dict[str, str]   # lower-cased name -> raw value without the outer {} / ""
+    fields: Dict[str, str]   # lower-cased name -> value without the outer {} / ""
+    raw: Dict[str, str] = field(default_factory=dict)   # lower-cased name -> value exactly as written
 
 
 def _match_close(text: str, i: int, open_ch: str, close_ch: str) -> int:
@@ -299,7 +326,7 @@ def _match_close(text: str, i: int, open_ch: str, close_ch: str) -> int:
     return -1
 
 
-def _parse_fields(body: str) -> Dict[str, str]:
+def _parse_fields(body: str, raw: Optional[Dict[str, str]] = None) -> Dict[str, str]:
     fields: Dict[str, str] = {}
     i, n = 0, len(body)
     while i < n:
@@ -307,6 +334,7 @@ def _parse_fields(body: str) -> Dict[str, str]:
         if not m:
             break
         name, i = m.group(1).lower(), m.end()
+        value_start = i
         parts = []
         while i < n:
             if body[i] == "{":
@@ -332,6 +360,8 @@ def _parse_fields(body: str) -> Dict[str, str]:
                 continue
             break
         fields[name] = "".join(parts).strip()
+        if raw is not None:
+            raw[name] = body[value_start:i].strip()
     return fields
 
 
@@ -349,7 +379,8 @@ def parse_bibtex(text: str) -> List[ParsedEntry]:
             continue
         body = text[m.end():close]
         key, _, rest = body.partition(",")
-        out.append(ParsedEntry(m.start(), close + 1, typ, key.strip(), _parse_fields(rest)))
+        raw: Dict[str, str] = {}
+        out.append(ParsedEntry(m.start(), close + 1, typ, key.strip(), _parse_fields(rest, raw), raw))
     return out
 
 
@@ -376,39 +407,97 @@ def is_preprint(e: ParsedEntry) -> bool:
 
 
 
+PAPER_TYPES = ("inproceedings", "conference", "article")
+FOUR = ("title", "author", "year")   # + booktitle | journal
+
+
+def _clean_published(e: ParsedEntry) -> Optional[tuple]:
+    """
+    An already-published conference / journal entry cut down to four fields -> (text, dropped fields),
+    or None when there is nothing to cut. Values are copied as written (braces, quotes, @string macros) — the venue name is
+    the agent's business, the server only drops pages / volume / publisher / doi / url / ...
+    """
+    if e.type not in PAPER_TYPES or not all(e.fields.get(k) for k in ("title", "year")):
+        return None
+    name = "journal" if e.fields.get("journal") and (e.type == "article" or not e.fields.get("booktitle")) else "booktitle"
+    if not e.fields.get(name):
+        return None
+    kind = "article" if name == "journal" else "inproceedings"
+    retyped = kind != e.type and not (e.type == "conference" and kind == "inproceedings")
+    if not retyped and not _extra_fields(e, name):
+        return None
+    return (format_raw(kind, name, e.key, e.raw["title"], e.raw.get("author", "{}"), e.raw[name], e.raw["year"]),
+            _extra_fields(e, name))
+
+
+def _extra_fields(e: ParsedEntry, venue_field: str) -> List[str]:
+    return sorted(k for k in e.fields if k not in FOUR and k != venue_field)
+
+
+def _clean_preprint(e: ParsedEntry, pid: str, year: int) -> Optional[str]:
+    """A not-(yet-)published arXiv entry in the four-field preprint form; the id moves into `journal`."""
+    if e.type == "article" and not _extra_fields(e, "journal") and pid in e.fields.get("journal", ""):
+        return None
+    return format_raw("article", "journal", e.key, e.raw["title"], e.raw.get("author", "{}"),
+                      f"{{arXiv preprint arXiv:{pid}}}", e.raw.get("year") or f"{{{year}}}")
+
+
 def fix_bibtex(session: Session, text: str) -> Dict:
     """
-    Sync a pasted .bib with the library — no lookups. arXiv-preprint entries whose paper the library
-    knows as published are rewritten (cite key, title and author text kept; @inproceedings/booktitle
-    for conferences); every other byte is left untouched. Preprint entries not in the library are
-    added as `unchecked`. Returns the new text plus what is still open:
+    Sync a pasted .bib with the library and cut every paper entry down to four fields (title, author,
+    booktitle | journal, year) — no lookups.
+      * arXiv-preprint entries the library knows as published get their venue (@inproceedings/booktitle
+        for conferences) -> `changes`; when the library has the official version's author list, the
+        author field is replaced by it (`authors: "published"` in the change), else it is kept.
+      * arXiv-preprint entries that are not published become `journal = {arXiv preprint arXiv:<id>}`;
+        ones not in the library are added as `unchecked`.
+      * published @inproceedings / @article entries lose pages, volume, publisher, doi, url, ...;
+        their venue text is kept as written.
+    Cite key and title are always kept, and so is the author text except in the case above. Entries that already have just the four fields,
+    preprint entries without an arXiv id, and every other kind of entry (@book, @misc for a website,
+    @string, comments) are left byte for byte. Returns the new text plus:
+      changes      — preprint -> published venue
+      cleaned      — entries that lost fields (`dropped`)
       needs_check  — the agent should check these, write back with set_status, then call again
       no_arxiv_id  — preprint entries without a recognisable arXiv id (agent handles them by hand)
     """
     entries = parse_bibtex(text)
-    pre = [e for e in entries if is_preprint(e) and e.fields.get("title")]
-    ids = {id(e): arxiv_id_of(e) for e in pre}
-    res = get_entries(session, [i for i in ids.values() if i])
+    pre = {id(e): arxiv_id_of(e) for e in entries if is_preprint(e) and e.fields.get("title")}
+    res = get_entries(session, [i for i in pre.values() if i])
     library = {b.paper_id: b for b in res["entries"]}
 
-    changes, open_items, no_id, out, last = [], [], [], [], 0
-    for e in pre:
-        pid = ids[id(e)]
-        if not pid:
-            no_id.append({"cite_key": e.key, "title": e.fields["title"]})
-            continue
-        b = library.get(pid)
-        if b and is_published(b):
+    changes, cleaned, open_items, no_id, out, last = [], [], [], [], [], 0
+    for e in entries:
+        new = None
+        if id(e) in pre:
+            pid = pre[id(e)]
+            if not pid:
+                no_id.append({"cite_key": e.key, "title": e.fields["title"]})
+                continue
+            b = library.get(pid)
+            if b and is_published(b):
+                official = " and ".join(escape_latex(a) for a in authors_of(b)) if b.published_authors else None
+                new = format_entry(e.key, e.fields["title"], official or e.fields.get("author", ""),
+                                   b.venue_type, escape_latex(b.venue), b.venue_year)
+                changes.append({"cite_key": e.key, "arxiv_id": pid, "authors": "published" if official else "kept",
+                                "from": e.fields.get("journal") or e.fields.get("booktitle") or f"@{e.type}",
+                                "to": f"{b.venue} {b.venue_year} ({b.venue_type})"})
+            else:
+                if not b or needs_check(b):
+                    open_items.append({"cite_key": e.key, "arxiv_id": pid, "status": b.status if b else "not-found",
+                                       "checked_at": b.checked_at.isoformat() if b and b.checked_at else None})
+                new = _clean_preprint(e, pid, b.arxiv_year if b else arxiv_year(pid))
+                if new:
+                    cleaned.append({"cite_key": e.key, "dropped": _extra_fields(e, "journal")})
+        else:
+            hit = _clean_published(e)
+            if hit:
+                new = hit[0]
+                cleaned.append({"cite_key": e.key, "dropped": hit[1]})
+        if new:
             out.append(text[last:e.start])
-            out.append(format_entry(e.key, e.fields["title"], e.fields.get("author", ""),
-                                    b.venue_type, escape_latex(b.venue), b.venue_year))
+            out.append(new)
             last = e.end
-            changes.append({"cite_key": e.key, "arxiv_id": pid,
-                            "from": e.fields.get("journal") or e.fields.get("booktitle") or f"@{e.type}",
-                            "to": f"{b.venue} {b.venue_year} ({b.venue_type})"})
-        elif not b or needs_check(b):
-            open_items.append({"cite_key": e.key, "arxiv_id": pid, "status": b.status if b else "not-found",
-                               "checked_at": b.checked_at.isoformat() if b and b.checked_at else None})
     out.append(text[last:])
-    return {"bibtex": "".join(out), "changes": changes, "needs_check": open_items, "no_arxiv_id": no_id,
-            "entries_total": len(entries), "preprints": len(pre), "warnings": res["warnings"]}
+    return {"bibtex": "".join(out), "changes": changes, "cleaned": cleaned, "needs_check": open_items,
+            "no_arxiv_id": no_id, "entries_total": len(entries), "preprints": len(pre), "warnings": res["warnings"]}

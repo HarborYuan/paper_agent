@@ -5,7 +5,7 @@
   </p>
   <p align="center">
     <a href="https://github.com/HarborYuan/paper_agent/actions/workflows/docker-publish.yml"><img src="https://github.com/HarborYuan/paper_agent/actions/workflows/docker-publish.yml/badge.svg" alt="Docker Build"></a>
-    <img src="https://img.shields.io/badge/version-1.2.1-cyan" alt="Version">
+    <img src="https://img.shields.io/badge/version-1.3.0-cyan" alt="Version">
     <img src="https://img.shields.io/badge/python-3.13+-blue?logo=python&logoColor=white" alt="Python">
     <img src="https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white" alt="FastAPI">
     <img src="https://img.shields.io/badge/React-61DAFB?logo=react&logoColor=black" alt="React">
@@ -45,6 +45,7 @@ Names are reserved for feature milestones; patch releases intentionally have no 
 
 | Version | Name | Highlights |
 |---------|------|------------|
+| **1.3.0** | *Bib2 Update* | `fix_bibtex` now cuts every paper entry of a pasted `.bib` down to four fields (title / author / booktitle or journal / year): published `@inproceedings` / `@article` entries lose pages, volume, publisher, doi, url, …, unpublished arXiv entries become `journal = {arXiv preprint arXiv:<id>}`, values are copied as written (`@string` macros kept), other entry kinds stay untouched; official author lists — `set_bibtex_status` takes `authors` for a published paper and from then on they replace the arXiv list in library entries and `fix_bibtex` rewrites (new `bibentry.published_authors`, migration 005); stricter venue naming in the MCP tool descriptions (bare conference abbreviations, `NIPS` up to 2017 / `NeurIPS` from 2018, no extra fields); `skills/fix-bib` — a stateless Claude Code skill that does the same one-shot fix without a server, for collaborators |
 | **1.2.1** | — | BibTeX titles wrapped in double braces (`title = {{...}}`) so styles that lowercase titles keep acronyms like SAM / OMG-Seg / 3D; MCP install docs now recommend pinning to a release tag via `uvx --from git+...@vX.Y.Z` |
 | **1.2.0** | *Bib Update* | BibTeX library driven by the agent over MCP (`get_bibtex`, `bibtex_venue_hints`, `set_bibtex_status`, `fix_bibtex`): any arXiv paper becomes `@inproceedings{booktitle}` (conference) / `@article{journal}` (journal or arXiv preprint); the server never guesses venues — the agent verifies `needs_check` entries and writes the verdict back once (`published` is final, "still a preprint" re-flagged after 30 days); pasted `.bib` files synced with stable cite keys; BibTeX copy button on the paper page. arXiv API hardening: retries with back-off, error / empty feeds detected, and an outage now pushes a Lark alert instead of the misleading "no new papers" message |
 | **1.1.0** | *Deep Read Update* | Stage-2 reviewer reads agentically: 20k-char triage pass, then ONE optional extended read (120k chars, new `STAGE2_DEEP_TEXT_CHAR_LIMIT`) when the verdict hinges on unseen experiments — `deep_read` + its reason stored and shown in the UI; prompt overhaul: summaries gain `## TL;DR` (single shared extractor now feeds digest / reports / API teasers), writing-craft sections (Teaser Figure, Intro Narrative, Method Writing), an explicit Reading Recommendation verdict, grounding rules ("Not mentioned." instead of guessing), CN 说人话 style with technical terms kept in English; stage-1/stage-2 relevance tiers unified; affiliation prompt gets a canonical list of university short forms |
@@ -275,7 +276,7 @@ All endpoints are served under the **`/api`** prefix (e.g. `GET /api/papers`) so
 `mcp_server/` is a small separate package (`paper-agent-mcp`, stdio) with explicit tools over the API — see [`mcp_server/README.md`](mcp_server/README.md) for the tool list. Register it in Claude Code, pinned to the release that matches your server:
 
 ```bash
-claude mcp add --scope user paper-agent -- uvx --from "git+https://github.com/HarborYuan/paper_agent@v1.2.0#subdirectory=mcp_server" paper-agent-mcp --base-url http://nas:8000
+claude mcp add --scope user paper-agent -- uvx --from "git+https://github.com/HarborYuan/paper_agent@v1.3.0#subdirectory=mcp_server" paper-agent-mcp --base-url http://nas:8000
 ```
 
 (To hack on the MCP server itself, register `uv run --directory /path/to/paper_agent/mcp_server paper-agent-mcp ...` instead — see its README.)

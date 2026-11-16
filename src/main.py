@@ -1033,13 +1033,14 @@ class BibStatusUpdate(SQLModel):
     venue_type: Optional[str] = None   # conference | journal (required for published)
     year: Optional[int] = None
     evidence: Optional[str] = None     # URL / note on where it was confirmed
+    authors: Optional[List[str]] = None  # published: author list of the official version (replaces arXiv's)
 
 @api.put("/bibtex/{paper_id:path}/status")
 def set_bibtex_status(paper_id: str, update: BibStatusUpdate, session: Session = Depends(get_session)):
     """Write the agent's venue verdict back. Published entries are final; 'preprint' is trusted for 30 days."""
     try:
         entry = bibtex_service.set_status(session, paper_id, update.status, update.venue, update.venue_type,
-                                          update.year, update.evidence)
+                                          update.year, update.evidence, update.authors)
     except bibtex_service.BibUpdateError as e:
         raise HTTPException(status_code=422, detail=str(e))
     except LookupError as e:

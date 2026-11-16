@@ -278,16 +278,26 @@ Workflow when citing: get_bibtex(ids) -> for each id in `needs_check` (never che
 checked > 30 days ago) call bibtex_venue_hints; if the arXiv comment / journal_ref is not conclusive, check
 DBLP / OpenReview / the proceedings / Semantic Scholar yourself -> set_bibtex_status(...) -> get_bibtex again.
 Published entries are final and never need checking again.
-Naming: conferences by short name (CVPR, ICCV, ECCV, NeurIPS, ICLR, ICML, ACL, EMNLP, AAAI, ...; workshops as
-"CVPR Workshops", "Findings of EMNLP"); well-known journals by short name (IEEE TPAMI, IJCV, IEEE TIP, IEEE TMM,
-IEEE TCSVT, IEEE TNNLS, IEEE TVCG, IEEE RA-L, ACM TOG, JMLR, TMLR, TACL); any other journal by its full name.
-The venue is stored exactly as you write it — follow this convention.
-Year = year of the venue (ICLR 2025), not of the arXiv upload.
+Naming — the venue is stored and printed exactly as you write it, so follow this strictly:
+- Conferences: ALWAYS the bare abbreviation — CVPR, ICCV, ECCV, NeurIPS, ICLR, ICML, ACL, EMNLP, NAACL, AAAI,
+  IJCAI, WACV, BMVC, ACM MM, SIGGRAPH, KDD, ... NEVER the long form: not "Proceedings of the IEEE/CVF Conference
+  on Computer Vision and Pattern Recognition", not "IEEE/CVF CVPR", not "Proc. CVPR", not "CVPR 2026" (the year
+  goes in `year`, never in `venue`). Workshops: "CVPR Workshops"; findings: "Findings of EMNLP".
+- NIPS vs NeurIPS: the conference was renamed in 2018. year <= 2017 -> "NIPS"; year >= 2018 -> "NeurIPS".
+  Never "Advances in Neural Information Processing Systems", never "NeurIPS" for a 2017-or-earlier paper.
+- Journals: well-known ones by short name (IEEE TPAMI, IJCV, IEEE TIP, IEEE TMM, IEEE TCSVT, IEEE TNNLS,
+  IEEE TVCG, IEEE RA-L, ACM TOG, JMLR, TMLR, TACL); any other journal by its full name.
+- Year = year of the venue (ICLR 2025), not of the arXiv upload.
+Fields — an entry has exactly four: title, author, booktitle | journal, year. NEVER add pages, volume, number,
+month, publisher, organization, address, editor, series, doi, url, eprint or note — not in an entry you write by
+hand (e.g. for `no_arxiv_id` items), and not squeezed into `venue`. Do not copy publisher BibTeX (IEEE Xplore,
+ACM DL, DBLP, Google Scholar) verbatim: take only the venue and year from it.
 """
 
 
 def _bib_entries_brief(entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    keep = ("paper_id", "cite_key", "title", "status", "needs_check", "venue_type", "venue", "year", "checked_at")
+    keep = ("paper_id", "cite_key", "title", "status", "needs_check", "venue_type", "venue", "year", "checked_at",
+            "authors_source")
     return [{k: e.get(k) for k in keep} for e in entries]
 
 
@@ -320,6 +330,12 @@ _SET_STATUS_DOC = """
     status="published": venue, venue_type ("conference" | "journal") and year required —
       final, never flagged again. status="preprint": you checked and it is not published yet (re-flagged after
       30 days). status="unchecked": reset. `evidence`: URL or short note on where you confirmed it.
+    `authors` (published only): the author list of the OFFICIAL version, in order, as full names
+      ("Kaiming He", not "He, K."). The arXiv list can differ from it (authors added, names or order changed);
+      once you write it, the official list wins everywhere — get_bibtex entries and fix_bibtex rewrites. Pass
+      it whenever a reliable official source gives the complete list (proceedings / publisher page, OpenReview
+      camera-ready, the publisher's or DBLP's BibTeX); never from memory, never a truncated "et al." list. If
+      you have no such source, omit it: the arXiv list (or the author text already in the .bib) is used.
     """ + _BIB_WORKFLOW
 
 
@@ -331,19 +347,27 @@ def set_bibtex_status(
     venue_type: Optional[str] = None,
     year: Optional[int] = None,
     evidence: Optional[str] = None,
+    authors: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     return _put(f"/api/bibtex/{paper_id}/status", {"status": status, "venue": venue, "venue_type": venue_type,
-                                                    "year": year, "evidence": evidence})
+                                                    "year": year, "evidence": evidence, "authors": authors})
 
 
 @mcp.tool()
 def fix_bibtex(bibtex: str) -> Dict[str, Any]:
     """
-    Sync a whole .bib file (pass its text) with the library, no lookups: arXiv-preprint entries whose paper is
-    known as published are rewritten (cite key, title and author text kept; conferences become
-    @inproceedings/booktitle); everything else is left untouched. Returns the new `bibtex`, `changes`,
-    `needs_check` (verify these, set_bibtex_status each, then call fix_bibtex again) and `no_arxiv_id`
-    (preprint entries without an arXiv id — handle by hand).
+    Sync a whole .bib file (pass its text) with the library and cut every paper entry down to four fields
+    (title, author, booktitle | journal, year), no lookups. arXiv-preprint entries whose paper is known as
+    published get their venue (conferences become @inproceedings/booktitle); the other arXiv entries become
+    `journal = {arXiv preprint arXiv:<id>}`; published @inproceedings / @article entries lose pages, volume,
+    publisher, doi, url, ... but keep their venue text as written — rename a long venue (see the naming rules
+    of set_bibtex_status) yourself in the returned text. Cite key and title are always kept; the author text is
+    kept too, except that an entry getting its published venue takes the official author list when the library
+    has one (written with set_bibtex_status `authors`);
+    other kinds of entry (@book, @misc for a website, @string) are left untouched. Returns the new `bibtex`,
+    `changes` (preprint -> venue), `cleaned` (entries that lost fields), `needs_check` (verify these,
+    set_bibtex_status each, then call fix_bibtex again) and `no_arxiv_id` (preprint entries without an arXiv
+    id — handle by hand, four fields only).
     """
     return _post("/api/bibtex/fix", {"bibtex": bibtex})
 

@@ -123,7 +123,8 @@ class BibEntry(SQLModel, table=True):
     paper_id: str = Field(primary_key=True)         # arXiv id, no version
     cite_key: str = Field(index=True, unique=True)  # stable across venue updates
     title: str
-    authors: str                                    # JSON list
+    authors: str                                    # JSON list — as on arXiv (refreshed from the API)
+    published_authors: Optional[str] = None         # JSON list — as in the official version (agent; published only)
     arxiv_year: int
     status: str = "unchecked"                       # unchecked | preprint (checked, not published) | published
     venue_type: Optional[str] = None                # conference | journal (published only)

@@ -165,11 +165,28 @@ def migration_004_two_stage_scoring(session: Session):
         logger.error(f"Migration 004 Failed: {e}")
         raise e
 
+def migration_005_bib_published_authors(session: Session):
+    """
+    BibTeX library: author list of the official (published) version, next to the arXiv one.
+    (A fresh database gets the column from SQLModel.metadata.create_all.)
+    """
+    logger.info("Migration 005: Adding bibentry.published_authors...")
+    try:
+        columns = [row[1] for row in session.exec(text("PRAGMA table_info(bibentry)")).all()]
+        if columns and "published_authors" not in columns:
+            session.exec(text("ALTER TABLE bibentry ADD COLUMN published_authors VARCHAR"))
+            logger.info("Migration 005: added bibentry.published_authors")
+        session.commit()
+    except Exception as e:
+        logger.error(f"Migration 005 Failed: {e}")
+        raise e
+
 MIGRATIONS = [
     migration_001_add_user_score,
     migration_002_clean_authors,
     migration_003_create_author_table,
     migration_004_two_stage_scoring,
+    migration_005_bib_published_authors,
 ]
 
 def check_and_migrate(dev_commit: bool = False):

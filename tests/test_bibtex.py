@@ -186,10 +186,23 @@ def test_fix_bibtex_syncs_and_lists_open_items(session, monkeypatch):
         ax.meta[pid] = _meta(pid)
 
     first = b.fix_bibtex(session, BIB)
-    assert first["bibtex"] == BIB and first["changes"] == []
+    assert first["changes"] == []
     assert [o["cite_key"] for o in first["needs_check"]] == ["kirillov2023segment", "liu2023visual",
                                                              "DBLP:journals/corr/abs-2601-00009"]
     assert first["no_arxiv_id"] == [{"cite_key": "noid", "title": "No Id Here"}]
+    # nothing is known as published yet: entries already in four-field form stay byte for byte ...
+    kept = BIB[:BIB.index("@misc{liu2023visual")]
+    assert first["bibtex"].startswith(kept)
+    # ... and the other arXiv entries take the preprint form, the id moving into `journal`
+    assert ("@article{liu2023visual,\n  title   = {Visual Instruction Tuning},\n"
+            "  author  = {Haotian Liu and Chunyuan Li},\n"
+            "  journal = {arXiv preprint arXiv:2304.08485},\n  year    = {2023}\n}") in first["bibtex"]
+    assert ('@article{DBLP:journals/corr/abs-2601-00009,\n  title   = "Still a Preprint",\n'
+            "  author  = {A. Nobody},\n  journal = {arXiv preprint arXiv:2601.00009},\n  year    = {2026}\n}") in first["bibtex"]
+    assert first["cleaned"] == [
+        {"cite_key": "liu2023visual", "dropped": ["archiveprefix", "eprint", "primaryclass"]},
+        {"cite_key": "DBLP:journals/corr/abs-2601-00009", "dropped": ["volume"]}]
+    assert first["bibtex"].endswith(BIB[BIB.index("@article{noid"):])                    # no id: untouched
 
     # The agent checks and writes back
     b.set_status(session, "2304.02643", "published", "ICCV", "conference", 2023)
@@ -204,10 +217,100 @@ def test_fix_bibtex_syncs_and_lists_open_items(session, monkeypatch):
                           "  author    = {Kirillov, Alexander and others},\n  booktitle = {ICCV},\n  year      = {2023}\n}")
     assert "@inproceedings{he2016deep, title={Deep residual learning}" in out           # untouched
     assert "@inproceedings{liu2023visual,\n  title     = {Visual Instruction Tuning},\n" in out
-    assert "journal = {CoRR}, volume = {abs/2601.00009}" in out                          # confirmed preprint
+    assert "journal = {arXiv preprint arXiv:2601.00009}" in out and "volume" not in out  # confirmed preprint
     assert out.rstrip().endswith('@string{foo = "bar"}')
     assert [c["cite_key"] for c in res["changes"]] == ["kirillov2023segment", "liu2023visual"]
     assert res["needs_check"] == []
+    assert b.fix_bibtex(session, out)["bibtex"] == out                                   # idempotent
+
+
+def test_fix_bibtex_cuts_published_entries_to_four_fields(session, monkeypatch):
+    Arxiv(monkeypatch)
+    bib = """@string{CVPR = "CVPR"}
+@inproceedings{he2016deep,
+  title={Deep Residual Learning for Image Recognition},
+  author={He, Kaiming and Zhang, Xiangyu},
+  booktitle=CVPR,
+  pages={770--778},
+  year=2016,
+  publisher={IEEE},
+  doi={10.1109/CVPR.2016.90},
+  url={https://example.org/resnet}
+}
+
+@article{ren2017faster,
+  title = "Faster {R-CNN}",
+  author = {Ren, Shaoqing},
+  journal = {IEEE TPAMI},
+  volume = {39}, number = {6}, pages = {1137--1149},
+  year = {2017}
+}
+
+@article{wrongtype2020, title={A}, author={B}, booktitle={ECCV}, year={2020}}
+@book{goodfellow2016deep, title={Deep Learning}, author={Goodfellow, Ian}, publisher={MIT Press}, year={2016}}
+@misc{site, title={A Website}, howpublished={\\url{https://example.org}}, note={Accessed 2026}}
+@inproceedings{clean2024, title={Clean}, author={C}, booktitle={ICLR}, year={2024}}
+"""
+    res = b.fix_bibtex(session, bib)
+    out = res["bibtex"]
+    # values are copied as written: the @string macro, the bare year, the quoted title
+    assert ("@inproceedings{he2016deep,\n  title     = {Deep Residual Learning for Image Recognition},\n"
+            "  author    = {He, Kaiming and Zhang, Xiangyu},\n  booktitle = CVPR,\n  year      = 2016\n}") in out
+    assert ('@article{ren2017faster,\n  title   = "Faster {R-CNN}",\n  author  = {Ren, Shaoqing},\n'
+            "  journal = {IEEE TPAMI},\n  year    = {2017}\n}") in out
+    assert "@inproceedings{wrongtype2020,\n  title     = {A},\n" in out                 # booktitle => @inproceedings
+    for gone in ("pages", "doi", "url={https://example.org/resnet}", "volume", "number", "publisher={IEEE}"):
+        assert gone not in out
+    assert out.startswith('@string{CVPR = "CVPR"}\n')
+    assert out.endswith(bib[bib.index("@book{goodfellow2016deep"):])                     # book, misc, clean: untouched
+    assert res["cleaned"] == [
+        {"cite_key": "he2016deep", "dropped": ["doi", "pages", "publisher", "url"]},
+        {"cite_key": "ren2017faster", "dropped": ["number", "pages", "volume"]},
+        {"cite_key": "wrongtype2020", "dropped": []}]
+    assert res["changes"] == [] and res["needs_check"] == [] and res["no_arxiv_id"] == [
+        {"cite_key": "site", "title": "A Website"}]
+    assert b.fix_bibtex(session, out)["bibtex"] == out
+
+
+def test_published_authors_win_over_arxiv(session, monkeypatch):
+    ax = Arxiv(monkeypatch)
+    ax.meta["2304.02643"] = _meta("2304.02643", title="Segment Anything", authors=("Alexander Kirillov", "Eric Mintun"))
+    bib = ("@article{sam, title={Segment Anything}, author={Kirillov, Alexander and Mintun, Eric},\n"
+           "  journal={arXiv preprint arXiv:2304.02643}, year={2023}}\n")
+
+    # published without an official list: library entry uses arXiv's, a pasted entry keeps its own text
+    e = b.set_status(session, "2304.02643", "published", "ICCV", "conference", 2023)
+    assert b.entry_dict(e)["authors_source"] == "arxiv"
+    assert "author    = {Alexander Kirillov and Eric Mintun}," in b.render(e)
+    res = b.fix_bibtex(session, bib)
+    assert "author    = {Kirillov, Alexander and Mintun, Eric}," in res["bibtex"]
+    assert res["changes"][0]["authors"] == "kept"
+
+    # the agent writes the official list: it wins everywhere
+    official = ["Alexander Kirillov", "Eric Mintun", "Nikhila  Ravi", "Ross Girshick"]
+    e = b.set_status(session, "2304.02643", "published", "ICCV", "conference", 2023, authors=official)
+    d = b.entry_dict(e)
+    assert d["authors_source"] == "published" and d["authors"][2] == "Nikhila Ravi"
+    line = "author    = {Alexander Kirillov and Eric Mintun and Nikhila Ravi and Ross Girshick},"
+    assert line in d["bibtex"]
+    res = b.fix_bibtex(session, bib)
+    assert line in res["bibtex"] and res["changes"][0]["authors"] == "published"
+    assert "@inproceedings{sam,\n  title     = {Segment Anything},\n" in res["bibtex"]   # key and title kept
+
+    # an arXiv refresh (hints) does not touch it; a later verdict without `authors` keeps it
+    ax.meta["2304.02643"] = _meta("2304.02643", title="Segment Anything", authors=("A. Kirillov",))
+    b.hints(session, ["2304.02643"])
+    e = b.set_status(session, "2304.02643", "published", "ICCV", "conference", 2023, evidence="again")
+    assert line in b.render(e)
+
+    with pytest.raises(b.BibUpdateError):
+        b.set_status(session, "2304.02643", "published", "ICCV", "conference", 2023, authors=[])
+    with pytest.raises(b.BibUpdateError):
+        b.set_status(session, "2304.02643", "published", "ICCV", "conference", 2023, authors=["A", " "])
+
+    # back to preprint: the official list goes with the venue
+    e = b.set_status(session, "2304.02643", "preprint")
+    assert e.published_authors is None and "author  = {A. Kirillov}," in b.render(e)
 
 
 # ---------------------------------------------------------------------------
@@ -226,6 +329,10 @@ def test_api_roundtrip(client, monkeypatch):
     r = client.put("/api/bibtex/2602.00001/status",
                    json={"venue": "CVPR", "venue_type": "conference", "year": 2026, "evidence": "arXiv comment"})
     assert r.status_code == 200 and r.json()["venue_type"] == "conference" and not r.json()["needs_check"]
+    assert r.json()["authors_source"] == "arxiv"
+    r = client.put("/api/bibtex/2602.00001/status", json={"venue": "CVPR", "venue_type": "conference", "year": 2026,
+                                                           "authors": ["Haobo Yuan", "New Author"]})
+    assert r.json()["authors_source"] == "published" and "Haobo Yuan and New Author" in r.json()["bibtex"]
     assert client.put("/api/bibtex/2602.00001/status", json={"venue": "CVPR", "year": 2026}).status_code == 422
 
     d = client.get("/api/bibtex").json()

@@ -39,7 +39,7 @@ uvx --from "git+https://github.com/HarborYuan/paper_agent#subdirectory=mcp_serve
 Pinned to a release (recommended — independent of any checkout; the tag should match the server version):
 
 ```bash
-claude mcp add --scope user paper-agent -- uvx --from "git+https://github.com/HarborYuan/paper_agent@v1.2.0#subdirectory=mcp_server" paper-agent-mcp --base-url http://nas:8000
+claude mcp add --scope user paper-agent -- uvx --from "git+https://github.com/HarborYuan/paper_agent@v1.3.0#subdirectory=mcp_server" paper-agent-mcp --base-url http://nas:8000
 ```
 
 To upgrade, `claude mcp remove paper-agent -s user` and add it again with the new tag. While developing the MCP server itself, run it from the checkout instead so edits apply on the next session:
