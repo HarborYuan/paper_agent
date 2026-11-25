@@ -719,6 +719,42 @@ async def rescore_date(date: str, background_tasks: BackgroundTasks, push: bool 
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
 
+@api.post("/papers/backfill-verdicts")
+async def backfill_verdicts(start: str, end: str, background_tasks: BackgroundTasks, max_cost: float = 50.0,
+                            deep_limit: int = 200, silent: bool = True):
+    """
+    Re-run the verdict pipeline over a date range (YYYY-MM-DD, inclusive), newest day first, as Batch API
+    jobs: screen -> review -> deep read with no nightly deep-read cap (`deep_limit` per day), stopping before
+    a day once this run is within ~$5 of `max_cost`. With `silent` (default) the results are not sent in the
+    next digest. Progress: GET /api/papers/backfill-verdicts.
+    """
+    if verdict_pipeline.BACKFILL.get("running"):
+        raise HTTPException(status_code=409, detail="A backfill is already running.")
+    try:
+        lo, hi = datetime.strptime(start, "%Y-%m-%d").date(), datetime.strptime(end, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+    if lo > hi:
+        raise HTTPException(status_code=400, detail="start is after end")
+    if not settings.chat_api_key:
+        raise HTTPException(status_code=400, detail=f"{settings.chat_key_name} is not configured")
+    verdict_pipeline.BACKFILL["running"] = True
+
+    async def job():
+        try:
+            await verdict_pipeline.backfill(lo, hi, max_cost, deep_limit=deep_limit, silent=silent, log=logger.log)
+        except Exception as e:
+            verdict_pipeline.BACKFILL.update(running=False, error=str(e)[:500])
+            await logger.log(f"Backfill failed: {e}")
+    background_tasks.add_task(job)
+    return {"message": f"Backfill started for {start} .. {end} (cap ${max_cost:.0f})"}
+
+
+@api.get("/papers/backfill-verdicts")
+def backfill_status():
+    return verdict_pipeline.BACKFILL
+
+
 @api.get("/authors")
 def list_authors(days: Optional[int] = Query(None, description="Filter papers published within the last N days"), session: Session = Depends(get_session)):
     """

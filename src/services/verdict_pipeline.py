@@ -32,6 +32,9 @@ from src.services.settings_service import (TASK_STAGE1, TASK_STAGE2, TASK_SUMMAR
 from src.utils import sanitize_text
 
 TASK_TRANSLATE = "translate"
+# Papers without stored text are fetched from arXiv before review; a few at a time keeps a big run
+# (a backfill reviews hundreds) from tripping arXiv's per-IP throttling.
+FULLTEXT_CONCURRENCY = 4
 VERDICTS = ["must_read", "worth_reading", "skim", "skip"]
 PUSH_VERDICTS = ("must_read", "worth_reading")
 BANDS = {"must_read": (92, 99), "worth_reading": (85, 91), "skim": (60, 84), "skip": (20, 59)}
@@ -257,7 +260,12 @@ async def review(papers: List[Paper], runner: ClaudeRunner, log=None, batch=None
     """candidates: {paper_id: {project_name: cosine or None}}; confirmed matches join the project."""
     model = get_llm_config().stage2_model
     candidates = candidates or {}
-    texts = await asyncio.gather(*(_full_text(p) for p in papers))
+    sem = asyncio.Semaphore(FULLTEXT_CONCURRENCY)
+
+    async def text_of(p):
+        async with sem:
+            return await _full_text(p)
+    texts = await asyncio.gather(*(text_of(p) for p in papers))
     res = await runner.run([review_request(p, t, model, projects, list(candidates.get(p.id, {})))
                             for p, t in zip(papers, texts)], log, batch=batch)
     out = {}
@@ -460,3 +468,77 @@ def get_reading(paper_id: str) -> Optional[dict]:
             "error": row.error, "units": load(row.units, []), "notes": load(row.notes, []),
             "translations": load(row.translations, {}), "deep": load(row.deep, None),
             "updated_at": row.updated_at.isoformat() if row.updated_at else None}
+
+
+# ---------------------------------------------------------------------------- backfill
+BACKFILL: Dict[str, Any] = {"running": False}
+
+
+def is_verdict_scored(p: Paper) -> bool:
+    try:
+        r = json.loads(p.score_reason or "{}")
+    except json.JSONDecodeError:
+        return False
+    return isinstance(r, dict) and r.get("pipeline") == "verdict"
+
+
+async def backfill(start, end, max_cost: float, deep_limit: int = 200, silent: bool = True,
+                   runner: Optional[ClaudeRunner] = None, log=None) -> Dict[str, Any]:
+    """
+    Run the verdict pipeline over past days, newest first, one day per set of batches: papers the
+    old pipeline scored get screen -> review -> deep read; papers this pipeline already reviewed but
+    never deep-read get their deep read. Stops before a day once this run has spent within
+    BACKFILL_DAY_HEADROOM of `max_cost`. With `silent`, papers that end up SUMMARIZED are marked
+    PUSHED so the next digest is not flooded with old papers (several were pushed already).
+    """
+    from datetime import timedelta
+    from src.services.usage_service import cost_since
+    runner = runner or ClaudeRunner()
+    began = datetime.now()
+    st = BACKFILL
+    st.update(running=True, started_at=began.isoformat(), start=str(start), end=str(end), max_cost=max_cost,
+              days={}, spent=0.0, stopped=None)
+    try:
+        day = end
+        while day >= start:
+            spent = cost_since(began) or 0.0
+            st["spent"] = round(spent, 4)
+            if spent + BACKFILL_DAY_HEADROOM > max_cost:
+                st["stopped"] = f"cost cap: ${spent:.2f} spent of ${max_cost:.2f}"
+                await _say(log, f"Backfill stopped before {day}: {st['stopped']}")
+                break
+            lo, hi = datetime.combine(day, datetime.min.time()), datetime.combine(day, datetime.max.time())
+            with Session(engine) as s:
+                papers = s.exec(select(Paper).where(Paper.published_at >= lo, Paper.published_at <= hi,
+                                                    Paper.user_score == None)).all()  # noqa: E711
+            old = [p for p in papers if not is_verdict_scored(p)]
+            waiting = [p for p in papers if is_verdict_scored(p) and p.status == "SCORED"]
+            await _say(log, f"Backfill {day}: {len(old)} to re-run, {len(waiting)} waiting for a deep read")
+            stats = await run_pipeline(old, runner, log=log, deep_limit=deep_limit) if old else {}
+            if waiting:
+                cap = min(deep_limit, affordable_deep(len(waiting)))
+                done = await deep_read(select_for_deep(waiting, cap), runner, log, final=True)
+                stats["deep_read"] = stats.get("deep_read", 0) + len(done)
+            ids = [p.id for p in papers]
+            with Session(engine) as s:
+                rows = s.exec(select(Paper).where(Paper.id.in_(ids), Paper.status == "SUMMARIZED")).all()
+                if silent:
+                    for r in rows:
+                        r.status = "PUSHED"
+                        s.add(r)
+                    s.commit()
+            stats["summarized"] = len(rows)
+            st["days"][str(day)] = stats
+            day -= timedelta(days=1)
+        st["spent"] = round(cost_since(began) or 0.0, 4)
+        await _say(log, f"Backfill finished: ${st['spent']:.2f} spent")
+        return st
+    finally:
+        st.update(running=False, finished_at=datetime.now().isoformat())
+
+
+BACKFILL_DAY_HEADROOM = 5.0  # a busy day costs ~$3-5, so stop early enough to stay under the cap
+
+
+def affordable_deep(n: int) -> int:
+    return claude_budget.affordable("deep", n)
