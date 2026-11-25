@@ -455,3 +455,10 @@ async def test_backfill_reruns_old_days(db, monkeypatch):
         core, other, untouched = (s.get(Paper, i) for i in ("2611.00001", "2611.00002", "2611.00003"))
     assert core.status == "SUMMARIZED" and verdict_pipeline.is_verdict_scored(core)
     assert other.status == "FILTERED" and untouched.status == "PUSHED" and not verdict_pipeline.is_verdict_scored(untouched)
+
+
+def test_backfill_status_route_is_not_shadowed():
+    from fastapi.testclient import TestClient
+    from src.main import app
+    r = TestClient(app).get("/api/papers/backfill-verdicts")
+    assert r.status_code == 200 and "running" in r.json()

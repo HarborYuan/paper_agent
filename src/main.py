@@ -438,6 +438,12 @@ def get_next_date(date: str, session: Session = Depends(get_session)):
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
 
+# declared before /papers/{paper_id}, which would otherwise match it
+@api.get("/papers/backfill-verdicts")
+def backfill_status():
+    return verdict_pipeline.BACKFILL
+
+
 @api.get("/papers/{paper_id}", response_model=Paper)
 def get_paper(paper_id: str, session: Session = Depends(get_session)):
     paper = session.get(Paper, paper_id)
@@ -746,11 +752,6 @@ async def backfill_verdicts(start: str, end: str, background_tasks: BackgroundTa
             await logger.log(f"Backfill failed: {e}")
     background_tasks.add_task(job)
     return {"message": f"Backfill started for {start} .. {end}"}
-
-
-@api.get("/papers/backfill-verdicts")
-def backfill_status():
-    return verdict_pipeline.BACKFILL
 
 
 @api.get("/authors")
