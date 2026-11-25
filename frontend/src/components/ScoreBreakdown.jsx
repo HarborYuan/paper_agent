@@ -1,5 +1,5 @@
 import React from 'react';
-import { Filter, Microscope, ArrowRight, Sparkles, ThumbsUp, ThumbsDown, Flag, User, BookOpen } from 'lucide-react';
+import { Filter, Microscope, ArrowRight, Sparkles, Flag, User, BookOpen } from 'lucide-react';
 
 /**
  * Renders the scoring details stored in paper.score_reason.
@@ -48,13 +48,21 @@ function Flags({ flags }) {
     );
 }
 
+const VERDICT_LABEL = { must_read: 'Must Read', worth_reading: 'Worth Reading', skim: 'Skim', skip: 'Skip' };
+const VERDICT_CLS = {
+    must_read: 'bg-green-500/20 text-green-300', worth_reading: 'bg-cyan-500/20 text-cyan-300',
+    skim: 'bg-yellow-500/20 text-yellow-300', skip: 'bg-red-500/20 text-red-300',
+};
+
 function StageCard({ icon: Icon, title, stage, dims, accent }) {
     if (!stage) return null;
     const scoreCls = accent ? 'text-cyan-300' : 'text-slate-200';
     return (
         <div className="bg-slate-950/60 border border-slate-800 rounded-xl p-4">
             <div className="flex items-start justify-between gap-3 mb-3">
-                <div className="flex items-center gap-2 text-sm font-bold text-slate-300"><Icon size={15} className="text-slate-500" /> {title}</div>
+                <div className="flex items-center gap-2 text-sm font-bold text-slate-300"><Icon size={15} className="text-slate-500" /> {title}
+                    {stage.verdict && <span className={`ml-1 text-xs px-2 py-0.5 rounded-full ${VERDICT_CLS[stage.verdict] || 'bg-slate-700 text-slate-300'}`}>{VERDICT_LABEL[stage.verdict] || stage.verdict}</span>}
+                </div>
                 <div className="text-right">
                     {stage.error ? (
                         <span className="text-xs text-red-400">{stage.error}</span>
@@ -70,20 +78,6 @@ function StageCard({ icon: Icon, title, stage, dims, accent }) {
                         {dims.filter(d => stage[d] !== undefined).map(d => <Dim key={d} name={d} value={stage[d]} />)}
                     </div>
                     {stage.one_line_reason && <p className="text-sm text-slate-300 leading-relaxed">{stage.one_line_reason}</p>}
-                    {(stage.strengths?.length || stage.weaknesses?.length) ? (
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
-                            {stage.strengths?.length ? (
-                                <ul className="space-y-1">
-                                    {stage.strengths.map((s, i) => <li key={i} className="flex items-start gap-1.5 text-xs text-green-300/90"><ThumbsUp size={11} className="mt-0.5 shrink-0" />{s}</li>)}
-                                </ul>
-                            ) : <div />}
-                            {stage.weaknesses?.length ? (
-                                <ul className="space-y-1">
-                                    {stage.weaknesses.map((s, i) => <li key={i} className="flex items-start gap-1.5 text-xs text-orange-300/90"><ThumbsDown size={11} className="mt-0.5 shrink-0" />{s}</li>)}
-                                </ul>
-                            ) : null}
-                        </div>
-                    ) : null}
                     <Flags flags={stage.risk_flags} />
                     {stage.deep_read === true && (
                         <p className="text-[11px] text-cyan-400/80 mt-2 flex items-start gap-1.5">
@@ -114,7 +108,17 @@ export default function ScoreBreakdown({ scoreReason, userScore }) {
         return <StageCard icon={Filter} title="AI scoring" stage={parsed.data} dims={['relevance', 'novelty', 'clarity']} accent />;
     }
 
-    const { stage1, stage2, boost, final } = parsed.data;
+    const { stage1, stage2, deep, boost, final, pipeline } = parsed.data;
+    if (pipeline === 'verdict') {
+        return (
+            <div className="space-y-3">
+                <StageCard icon={Filter} title="① Screen" stage={stage1} dims={['relevance']} accent={!stage2} />
+                <StageCard icon={Microscope} title="② Review" stage={stage2} dims={['relevance', 'novelty', 'evidence', 'reusability']} accent={!deep} />
+                <StageCard icon={BookOpen} title="③ Deep read" stage={deep} dims={['relevance', 'novelty', 'evidence', 'reusability']} accent />
+                {boost && <p className="text-xs text-yellow-300 flex items-center gap-1"><Sparkles size={11} /> boosted to {boost.to} ({boost.reason})</p>}
+            </div>
+        );
+    }
     return (
         <div className="space-y-3">
             <div className="flex items-center gap-2 text-xs text-slate-500">

@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 from collections import Counter
 from contextlib import asynccontextmanager
 import re
+from pydantic import BaseModel
 
 from src.database import init_db, get_session, engine
 from src.models import Paper, Author
@@ -24,16 +25,13 @@ from src.services.settings_service import (
     get_llm_config, update_llm_config, llm_defaults, describe_settings, update_settings,
 )
 from src.services.model_catalog import model_catalog
-from src.services.usage_service import usage_summary, estimate as estimate_cost
-from src.services.report_service import (
-    KINDS as REPORT_KINDS, generate_report, report_to_lark, mark_pushed, period_for,
-)
+from src.services.usage_service import usage_summary
 from src.services.notifier import get_notifier
-from src.models import Report
 from src.services import embedding_service
 from src.services.paper_views import compact_paper
 from src.services import author_index as author_index_service
 from src.services import bibtex_service
+from src.services import verdict_pipeline, reading_page, claude_budget, project_service
 from src.services.arxiv import ArxivAPIError
 
 
@@ -189,7 +187,7 @@ class BulkInsertRequest(SQLModel):
     papers: List[BulkPaperIn]
 
 @api.post("/papers/bulk-insert")
-def bulk_insert_papers(request: BulkInsertRequest, session: Session = Depends(get_session)):
+def bulk_insert_papers(request: BulkInsertRequest, background_tasks: BackgroundTasks, session: Session = Depends(get_session)):
     """
     Insert paper metadata directly as NEW, skipping ids that already exist.
     Built for backfill: nothing is fetched from arXiv and nothing is pushed
@@ -219,7 +217,16 @@ def bulk_insert_papers(request: BulkInsertRequest, session: Session = Depends(ge
         ))
         inserted += 1
     session.commit()
+    new_ids = [re.sub(r'v\d+$', '', p.id.strip()) for p in request.papers]
+    background_tasks.add_task(_embed_quietly, new_ids)   # vectors right away; scoring runs with the next nightly job
     return {"inserted": inserted, "skipped": len(request.papers) - inserted}
+
+
+async def _embed_quietly(paper_ids):
+    try:
+        await embedding_service.embed_new_papers(paper_ids)
+    except Exception as e:
+        await logger.log(f"Embedding of inserted papers skipped: {e} (the nightly run will catch up)")
 
 @api.get("/papers", response_model=None)
 def list_papers(
@@ -451,6 +458,164 @@ def related_papers(paper_id: str, k: int = 8, session: Session = Depends(get_ses
     return {"available": True, "results": results}
 
 
+@api.post("/papers/{paper_id}/deep-read")
+async def trigger_deep_read(paper_id: str, background_tasks: BackgroundTasks, force: bool = False,
+                            session: Session = Depends(get_session)):
+    """
+    Deep read one paper now (Claude API, real time): review first if needed, then the final verdict,
+    summary, paragraph-by-paragraph gist + claim flags and a full Chinese translation.
+    The result is shown at /read/{paper_id}; poll GET /api/papers/{paper_id}/reading for status.
+    Takes 1-2 minutes and roughly $0.1-0.2.
+    """
+    if not session.get(Paper, paper_id):
+        raise HTTPException(status_code=404, detail="Paper not found")
+    if not settings.chat_api_key:
+        raise HTTPException(status_code=400, detail=f"{settings.chat_key_name} is not configured")
+    existing = verdict_pipeline.get_reading(paper_id)
+    if existing and existing["status"] == "RUNNING" and not force:
+        return {"status": "RUNNING", "read_url": f"/read/{paper_id}"}
+    if existing and existing["status"] == "DONE" and not force:
+        return {"status": "DONE", "read_url": f"/read/{paper_id}"}
+    verdict_pipeline._upsert_reading(paper_id, status="PENDING", error=None)
+
+    if claude_budget.affordable("deep", 3) < 3:
+        raise HTTPException(status_code=429, detail=f"Claude budget nearly used up: {claude_budget.status()}")
+
+    async def job():
+        try:
+            await verdict_pipeline.deep_read_on_demand(paper_id, log=logger.log)
+        except Exception as e:
+            verdict_pipeline._upsert_reading(paper_id, status="ERROR", error=str(e)[:500])
+            await logger.log(f"Deep read of {paper_id} failed: {e}")
+    background_tasks.add_task(job)
+    return {"status": "STARTED", "read_url": f"/read/{paper_id}"}
+
+
+# ---------------------------------------------------------------------------- projects
+class ProjectIn(BaseModel):
+    name: str
+    description: str = ""
+    keywords: List[str] = []
+    seed_paper_ids: List[str] = []
+
+
+class ProjectPatch(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    keywords: Optional[List[str]] = None
+    active: Optional[bool] = None
+
+
+class ProjectPapersIn(BaseModel):
+    paper_ids: List[str]
+    source: str = "manual"
+
+
+@api.get("/projects")
+def list_projects():
+    """All projects with paper counts."""
+    return project_service.list_projects()
+
+
+@api.post("/projects")
+def create_project(body: ProjectIn):
+    """Create a project; seed papers anchor its embedding recall (they must already be in the library)."""
+    try:
+        return project_service.create(body.name, body.description, body.keywords, body.seed_paper_ids)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@api.get("/projects/{key}")
+def get_project(key: str, limit: int = 200):
+    """Project (by id or name) with its papers, newest first."""
+    d = project_service.get(key, limit=limit)
+    if d is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return d
+
+
+@api.patch("/projects/{key}")
+def patch_project(key: str, body: ProjectPatch):
+    try:
+        d = project_service.update(key, body.name, body.description, body.keywords, body.active)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if d is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return d
+
+
+@api.delete("/projects/{key}")
+def delete_project(key: str):
+    if not project_service.delete(key):
+        raise HTTPException(status_code=404, detail="Project not found")
+    return {"deleted": key}
+
+
+@api.post("/projects/{key}/papers")
+def add_project_papers(key: str, body: ProjectPapersIn):
+    """Add papers (source: manual or seed). Unknown ids are reported, not added — add them to the library first."""
+    if body.source not in ("manual", "seed"):
+        raise HTTPException(status_code=400, detail="source must be manual or seed")
+    try:
+        return project_service.add_papers(key, body.paper_ids, source=body.source)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@api.delete("/projects/{key}/papers/{paper_id}")
+def remove_project_paper(key: str, paper_id: str):
+    try:
+        return {"removed": project_service.remove_papers(key, [paper_id])}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@api.get("/projects/{key}/suggestions")
+async def project_suggestions(key: str, k: int = 20):
+    """Library papers closest to the project (seed papers + description) that are not in it yet."""
+    if project_service.resolve(key) is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return await project_service.suggestions(key, k=k)
+
+
+@api.get("/claude/models")
+def list_claude_models():
+    """Claude models for the selected CHAT_PROVIDER, with list prices (USD per 1M tokens)."""
+    from src.services.claude_runner import PRICES
+    names = {"claude-haiku-5-5": "Claude Haiku 5.5", "claude-sonnet-5-5": "Claude Sonnet 5.5", "claude-sonnet-5": "Claude Sonnet 5",
+             "claude-opus-5-5": "Claude Opus 5.5", "claude-opus-5": "Claude Opus 5", "claude-fable-5-2": "Claude Fable 5.2",
+             "claude-haiku-4-5": "Claude Haiku 4.5"}
+    return {"key_configured": bool(settings.chat_api_key), "provider": settings.CHAT_PROVIDER,
+            "models": [{"id": k, "name": names.get(k, k), "prompt_price_per_m": v[0], "completion_price_per_m": v[1]}
+                       for k, v in PRICES.items()]}
+
+
+@api.get("/claude/budget")
+def get_claude_budget():
+    """Claude API spend this billing cycle vs CLAUDE_MONTHLY_BUDGET (list-price estimate)."""
+    return claude_budget.status()
+
+
+@api.get("/papers/{paper_id}/reading")
+def get_paper_reading(paper_id: str, full: bool = False):
+    """Deep-read status; with full=true also the units, notes (gist + claim flags) and translations."""
+    r = verdict_pipeline.get_reading(paper_id)
+    if r is None:
+        return {"paper_id": paper_id, "status": "NONE", "read_url": f"/read/{paper_id}"}
+    r["read_url"] = f"/read/{paper_id}"
+    if not full:
+        flags = [f for n in r["notes"] for f in n.get("flags", []) if f.get("verified")]
+        r = {k: v for k, v in r.items() if k not in ("units", "notes", "translations")}
+        r["flags"] = flags
+    return r
+
+
+os.makedirs(settings.figure_dir, exist_ok=True)
+app.mount("/api/figures", StaticFiles(directory=settings.figure_dir), name="figures")
+
+
 # In-memory store for rate limiting
 RESCORE_LAST_RUN = {}  # date_str -> last_run_timestamp
 RESUMMARIZE_LAST_RUN = {}  # paper_id -> last_run_timestamp
@@ -458,7 +623,7 @@ RESUMMARIZE_LAST_RUN = {}  # paper_id -> last_run_timestamp
 @api.post("/papers/{paper_id}/resummarize")
 async def resummarize_paper(paper_id: str, background_tasks: BackgroundTasks, session: Session = Depends(get_session)):
     """
-    Trigger re-summarization for a single paper.
+    Redo the deep read of one paper (same as POST /papers/{id}/deep-read?force=true).
     Rate limited to once per 30 seconds per paper.
     """
     # Rate Limiting
@@ -510,10 +675,9 @@ async def update_paper_score(paper_id: str, score: int, session: Session = Depen
 @api.post("/papers/re-score-date")
 async def rescore_date(date: str, background_tasks: BackgroundTasks, push: bool = False, session: Session = Depends(get_session)):
     """
-    Trigger re-scoring for all papers on a specific date.
-    Rate limited to once per 60 seconds per date.
-    push=False (default) suppresses per-paper notifications; newly qualifying
-    papers stay SUMMARIZED and go out with the next scheduled digest.
+    Re-run the verdict pipeline (screen -> review -> deep read) on all papers of a date, as Batch API jobs.
+    Rate limited to once per 60 seconds per date. Newly qualifying papers stay SUMMARIZED and go out with
+    the next scheduled digest (`push` is kept for compatibility).
     """
     try:
         # Rate Limiting
@@ -544,11 +708,13 @@ async def rescore_date(date: str, background_tasks: BackgroundTasks, push: bool 
         # Update timestamp
         RESCORE_LAST_RUN[date] = now
         
-        for paper in papers:
-            # Pass force_rescore=True
-            background_tasks.add_task(process_single_paper, paper.id, True, push)
-            
-        return {"message": f"Started re-scoring for {len(papers)} papers on {date}"}
+        papers = [p for p in papers if p.user_score is None]
+
+        async def job():
+            from src.services.claude_runner import ClaudeRunner
+            await verdict_pipeline.run_pipeline(papers, ClaudeRunner(), log=logger.log)
+        background_tasks.add_task(job)
+        return {"message": f"Started re-scoring {len(papers)} papers on {date} (Batch API; newly qualifying papers go out with the next digest)"}
         
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
@@ -720,9 +886,7 @@ class LLMSettingsUpdate(SQLModel):
     stage1_model: Optional[str] = None
     stage2_model: Optional[str] = None
     summary_model: Optional[str] = None
-    report_model: Optional[str] = None
-    stage2_threshold: Optional[int] = None
-    score_threshold: Optional[int] = None
+    translate_model: Optional[str] = None
 
 
 class SettingsUpdate(SQLModel):
@@ -734,18 +898,20 @@ class ProfileUpdate(SQLModel):
 
 
 def _llm_settings_payload(warnings: Optional[List[str]] = None):
+    from src.services.settings_service import stale_model_warnings
     cfg = get_llm_config()
     desc = describe_settings()
     return {
         "profile": settings.USER_PROFILE,
         "provider": desc["provider"],
         "env_file": desc["env_file"],
-        "models": {"stage1": cfg.stage1_model, "stage2": cfg.stage2_model, "summary": cfg.summary_model, "report": cfg.report_model},
-        "thresholds": {"stage2_threshold": cfg.stage2_threshold, "score_threshold": cfg.score_threshold},
+        "models": {"screen": cfg.stage1_model, "review": cfg.stage2_model, "deep_read": cfg.summary_model,
+                   "translate": cfg.translate_model},
+        "gates": {"screen_min_relevance": settings.SCREEN_MIN_RELEVANCE, "deep_read_max_per_run": settings.DEEP_READ_MAX_PER_RUN,
+                  "push_score": cfg.score_threshold},
         "defaults": llm_defaults(),
         "summary_language": settings.SUMMARY_LANGUAGE,
-        "catalog": model_catalog.status(),
-        "warnings": warnings or [],
+        "warnings": (warnings or []) + stale_model_warnings(),
     }
 
 
@@ -802,35 +968,17 @@ def get_llm_settings():
 
 @api.put("/settings/llm")
 async def put_model_settings(update: LLMSettingsUpdate):
-    """
-    Update model selection / thresholds. Written to the env file and used by the next run.
-    Model ids are validated against the provider catalog when the provider is OpenRouter.
-    """
-    # Validate model ids against the catalog (only meaningful when the provider is OpenRouter,
-    # whose ids match the catalog; legacy endpoints use their own ids)
-    await model_catalog.refresh()
-    if settings.llm_provider == "openrouter" and model_catalog.status()["count"] > 0:
-        for field in ("stage1_model", "stage2_model", "summary_model", "report_model"):
-            mid = getattr(update, field)
-            if mid and model_catalog.get(mid.strip()) is None:
-                raise HTTPException(status_code=400, detail=f"Unknown model id for {field}: {mid}")
+    """Update the Claude models (ids must start with claude-). Written to the env file, used by the next run."""
     try:
         cfg, warnings = update_llm_config(
-            stage1_model=update.stage1_model,
-            stage2_model=update.stage2_model,
-            summary_model=update.summary_model,
-            report_model=update.report_model,
-            stage2_threshold=update.stage2_threshold,
-            score_threshold=update.score_threshold,
+            stage1_model=update.stage1_model, stage2_model=update.stage2_model, summary_model=update.summary_model,
+            translate_model=update.translate_model,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except (OSError, PermissionError) as e:
         raise HTTPException(status_code=500, detail=f"Could not write env file: {e}")
-    await logger.log(
-        f"Settings updated — stage1: {cfg.stage1_model} | stage2: {cfg.stage2_model} (>= {cfg.stage2_threshold}) | "
-        f"summary: {cfg.summary_model} (>= {cfg.score_threshold})"
-    )
+    await logger.log(f"Models updated — screen: {cfg.stage1_model} | review: {cfg.stage2_model} | deep read: {cfg.summary_model}")
     return _llm_settings_payload(warnings)
 
 
@@ -851,30 +999,6 @@ def get_llm_usage(days: int = Query(30, description="Breakdown window in days"),
     """Real LLM spend: totals for today/7d/30d/all-time and a by-task/by-model breakdown."""
     return usage_summary(session, breakdown_days=days)
 
-
-@api.get("/llm/estimate")
-async def get_llm_estimate(
-    stage1_model: Optional[str] = None,
-    stage2_model: Optional[str] = None,
-    summary_model: Optional[str] = None,
-    report_model: Optional[str] = None,
-    stage2_threshold: Optional[int] = None,
-    score_threshold: Optional[int] = None,
-    session: Session = Depends(get_session),
-):
-    """
-    Projected cost per day / month for a model selection (defaults to the current settings).
-    Uses observed average tokens per task and observed paper volumes when available.
-    """
-    await model_catalog.refresh()
-    cfg = get_llm_config()
-    if stage1_model: cfg.stage1_model = stage1_model
-    if stage2_model: cfg.stage2_model = stage2_model
-    if summary_model: cfg.summary_model = summary_model
-    if report_model: cfg.report_model = report_model
-    if stage2_threshold is not None: cfg.stage2_threshold = stage2_threshold
-    if score_threshold is not None: cfg.score_threshold = score_threshold
-    return estimate_cost(session, cfg)
 
 # ---------------------------------------------------------------------------
 # Embeddings admin
@@ -911,87 +1035,6 @@ async def embeddings_models(refresh: bool = False):
     return {"models": [m.to_dict() for m in model_catalog.list(kind="embedding")], "catalog": model_catalog.status()}
 
 
-# ---------------------------------------------------------------------------
-# Reports (daily / weekly / monthly trend summaries)
-# ---------------------------------------------------------------------------
-class ReportGenerateRequest(SQLModel):
-    kind: str
-    date: Optional[str] = None      # YYYY-MM-DD anchor (default: today, UTC)
-    replace: bool = True
-
-
-REPORT_GEN_LAST_RUN = {}  # (kind, date) -> timestamp
-
-
-@api.get("/reports")
-def list_reports(kind: Optional[str] = None, limit: int = 30, session: Session = Depends(get_session)):
-    """Reports, newest first. Optional ?kind=daily|weekly|monthly."""
-    q = select(Report)
-    if kind:
-        q = q.where(Report.kind == kind)
-    q = q.order_by(Report.period_start.desc(), Report.id.desc()).limit(limit)
-    return session.exec(q).all()
-
-
-@api.get("/reports/{report_id}")
-def get_report(report_id: int, session: Session = Depends(get_session)):
-    rep = session.get(Report, report_id)
-    if not rep:
-        raise HTTPException(status_code=404, detail="Report not found")
-    return rep
-
-
-@api.post("/reports/generate")
-async def generate_report_endpoint(req: ReportGenerateRequest):
-    """
-    Generate (or regenerate) a report on demand. daily = that day; weekly = the 7 days before `date`;
-    monthly = previous month when `date` is the 1st, otherwise the month containing `date`.
-    Rate limited to once per 60 s per kind+date.
-    """
-    if req.kind not in REPORT_KINDS:
-        raise HTTPException(status_code=400, detail=f"kind must be one of {list(REPORT_KINDS)}")
-    try:
-        ref = datetime.strptime(req.date, "%Y-%m-%d").date() if req.date else datetime.utcnow().date()
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
-    key = (req.kind, ref.isoformat())
-    now = datetime.now()
-    last = REPORT_GEN_LAST_RUN.get(key)
-    if last and (now - last).total_seconds() < 60:
-        raise HTTPException(status_code=429, detail="Please wait a minute before regenerating this report.")
-    REPORT_GEN_LAST_RUN[key] = now
-    rep = await generate_report(req.kind, ref, replace=req.replace)
-    if rep is None:
-        start, end, label = period_for(req.kind, ref)
-        raise HTTPException(status_code=404, detail=f"No papers above the score threshold in {label} (or the LLM call failed).")
-    return rep
-
-
-@api.post("/reports/{report_id}/push")
-async def push_report(report_id: int, session: Session = Depends(get_session)):
-    """Send a report to the configured Lark webhook."""
-    rep = session.get(Report, report_id)
-    if not rep:
-        raise HTTPException(status_code=404, detail="Report not found")
-    notifier = get_notifier()
-    if not notifier:
-        raise HTTPException(status_code=400, detail="No notifier configured (set LARK_WEBHOOK_URL in Settings).")
-    ok = await notifier.send_messages([report_to_lark(rep)])
-    if not ok:
-        raise HTTPException(status_code=502, detail="Lark webhook rejected the message.")
-    mark_pushed(rep.id)
-    session.refresh(rep)
-    return rep
-
-
-@api.delete("/reports/{report_id}")
-def delete_report(report_id: int, session: Session = Depends(get_session)):
-    rep = session.get(Report, report_id)
-    if not rep:
-        raise HTTPException(status_code=404, detail="Report not found")
-    session.delete(rep)
-    session.commit()
-    return {"deleted": report_id}
 
 
 # ---------------------------------------------------------------------------
@@ -1068,6 +1111,53 @@ def read_root():
 
 
 app.include_router(api)
+
+@app.get("/picks")
+def picks_page(date: Optional[str] = None, days: int = 7, session: Session = Depends(get_session)):
+    """Must Read / Worth Reading papers for `days` publication days ending at `date` (default: latest)."""
+    from fastapi.responses import HTMLResponse
+    from src.models import PaperReading
+    verdicts = ("must_read", "worth_reading")
+    rows = session.exec(select(Paper).where(Paper.status.in_(["SUMMARIZED", "PUSHED"]))
+                        .order_by(Paper.published_at.desc()).limit(3000)).all()
+
+    def verdict_of(p):
+        try:
+            r = json.loads(p.score_reason or "{}")
+        except json.JSONDecodeError:
+            return None
+        return ((r.get("deep") or r.get("stage2") or {}) if isinstance(r, dict) else {}).get("verdict")
+    picks = [p for p in rows if verdict_of(p) in verdicts]
+    all_days = sorted({p.published_at.strftime("%Y-%m-%d") for p in picks}, reverse=True)
+    end = date if date in all_days else (all_days[0] if all_days else None)
+    i = all_days.index(end) if end else 0
+    window = all_days[i:i + days]
+    by_day = [(d, sorted([p for p in picks if p.published_at.strftime("%Y-%m-%d") == d],
+                         key=lambda p: (verdict_of(p) != "must_read", -(p.score or 0)))) for d in window]
+    ids = [p.id for _, ps in by_day for p in ps]
+    readings = {}
+    for r in session.exec(select(PaperReading).where(PaperReading.paper_id.in_(ids))).all() if ids else []:
+        notes = json.loads(r.notes) if r.notes else []
+        fl = [f for n in notes for f in n.get("flags", []) if f.get("verified")]
+        readings[r.paper_id] = {"status": r.status, "flags": {"q": sum(f["kind"] == "questionable" for f in fl),
+                                                              "b": sum(f["kind"] == "big_claim" for f in fl)}}
+    projects = {pid: project_service.projects_of(pid) for pid in ids}
+    later = all_days[max(0, i - days)] if i > 0 else None
+    earlier = all_days[i + days] if i + days < len(all_days) else None
+    return HTMLResponse(reading_page.render_picks(by_day, readings, projects, earlier, later, "Daily Picks"),
+                        headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/read/{paper_id:path}")
+def read_page(paper_id: str, session: Session = Depends(get_session)):
+    """Bilingual reading page: original paragraphs, Chinese gist + translation, flagged claims."""
+    from fastapi.responses import HTMLResponse
+    paper = session.get(Paper, paper_id)
+    if not paper:
+        raise HTTPException(status_code=404, detail="Paper not found")
+    return HTMLResponse(reading_page.render(paper, verdict_pipeline.get_reading(paper_id)),
+                        headers={"Cache-Control": "no-cache"})
+
 
 # Root-level liveness probe (kept outside /api for docker/uptime checks)
 @app.get("/health")

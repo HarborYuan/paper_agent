@@ -27,13 +27,6 @@ class _StubFetcher:
         pass
 
 
-class _StubLLM:
-    class config:
-        score_threshold = 85
-        stage2_threshold = 60
-        stage1_model = "stub-1"
-        stage2_model = "stub-2"
-        summary_model = "stub-s"
 
 
 def _make_engine():
@@ -64,17 +57,21 @@ def _insert(engine, pid, status):
 
 
 def _base_patches(monkeypatch, engine, scored):
-    async def _score(sem, llm, paper):
-        scored.append(paper.id)
+    async def _score(papers, log=None):
+        scored.extend(p.id for p in papers)
+        return {"reviewed": 0, "deep_read": 0}
 
-    async def _reports(*args, **kwargs):
-        return []
 
     monkeypatch.setattr(worker, "engine", engine)
     monkeypatch.setattr(worker, "ArxivFetcher", _StubFetcher)
-    monkeypatch.setattr(worker, "LLMService", _StubLLM)
-    monkeypatch.setattr(worker, "process_paper_score", _score)
-    monkeypatch.setattr(worker, "run_scheduled_reports", _reports)
+    monkeypatch.setattr(worker, "score_papers", _score)
+    monkeypatch.setattr(worker.settings, "ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr(worker.settings, "HOT_ENABLED", False)
+
+    async def _no_embed(*a, **kw):
+        return 0
+    monkeypatch.setattr(worker, "embed_new_papers", _no_embed)
+    monkeypatch.setattr("src.database.engine", engine)
 
 
 def test_pending_new_is_scored_when_fetch_is_empty(monkeypatch):

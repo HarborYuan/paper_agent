@@ -1,0 +1,24 @@
+PROVISIONAL REVIEW (first part of the paper only):
+verdict: {{ review.verdict }}; relevance {{ review.relevance }}, novelty {{ review.novelty }}, evidence {{ review.evidence }}, reusability {{ review.reusability }}
+reason: {{ review.one_line_reason }}
+
+Title: {{ paper.title }}
+Authors: {{ authors_str }}
+Category: {{ paper.category_primary }}
+Abstract: {{ paper.summary_generic }}
+
+{% if units %}PAPER UNITS (main body in reading order; appendix and references omitted):
+{% for u in units %}{% if u.kind == 'heading' %}
+## {{ u.text }}
+{% elif u.kind == 'para' %}[{{ u.id }}] {{ u.text }}
+{% elif u.kind == 'equation' %}[{{ u.id }}] (equation) {{ u.tex }}
+{% elif u.kind == 'figure' %}[{{ u.id }}] (figure) {{ u.caption }}
+{% elif u.kind == 'table' %}[{{ u.id }}] (table) {{ u.caption }}
+{{ u.table_text }}
+{% endif %}{% endfor %}
+{% elif full_text %}FULL TEXT:
+<<<
+{{ full_text }}
+>>>
+No structured units are available: return an empty "notes" list.
+{% else %}FULL TEXT: not available — work from the abstract, mark missing sections "Not mentioned.", and return an empty "notes" list.{% endif %}

@@ -5,7 +5,7 @@
   </p>
   <p align="center">
     <a href="https://github.com/HarborYuan/paper_agent/actions/workflows/docker-publish.yml"><img src="https://github.com/HarborYuan/paper_agent/actions/workflows/docker-publish.yml/badge.svg" alt="Docker Build"></a>
-    <img src="https://img.shields.io/badge/version-1.3.0-cyan" alt="Version">
+    <img src="https://img.shields.io/badge/version-2.0.0-cyan" alt="Version">
     <img src="https://img.shields.io/badge/python-3.13+-blue?logo=python&logoColor=white" alt="Python">
     <img src="https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white" alt="FastAPI">
     <img src="https://img.shields.io/badge/React-61DAFB?logo=react&logoColor=black" alt="React">
@@ -19,19 +19,20 @@
 | Feature | Description |
 |---------|-------------|
 | 🔍 **Auto-Fetch** | Pulls new papers from arXiv daily (de-duplicated) |
-| 🤖 **Two-Stage LLM Scoring** | Stage 1: cheap screen on title+abstract (recall). Stage 2: stronger model reads the start of the PDF and judges relevance **and quality** (precision). Final score = stage 2 |
-| 🔌 **OpenRouter / any OpenAI-compatible API** | One key, hundreds of models; pick the model per stage from the Settings page |
-| ⚙️ **Everything editable in the UI** | All `.env` keys (provider keys, models, thresholds, categories, schedule, profile, Lark webhook) edited from Settings, written back to the env file and hot-applied — secrets never leave the server |
-| 💸 **Cost tracking & estimates** | Real spend per call (from provider usage), today / 7d / 30d totals, and a live per-day / per-month estimate for any model selection |
-| 📝 **Smart Summaries** | Generates personalized markdown summaries with TL;DR, contributions, methodology |
-| 🤝 **MCP server for agents** | `mcp_server/` exposes the instance to Claude Code & co.: semantic search, recent papers, people-of-interest lookup (fuzzy names), paper details / full text, reports, and write-back of scores and important people |
-| 🔎 **Semantic search & related papers** | Title+abstract embeddings (voyage-4 via OpenRouter, 512-d): describe what you want instead of guessing title words; every paper page lists its nearest neighbours; reports cluster papers by embedding before the LLM writes the topic section |
-| 📰 **Daily / Weekly / Monthly Reports** | LLM-written trend reports over the selected papers — topic clusters, institution counts vs. previous period, must-read top 5, signals — stored in the app and pushed to Lark right after the digest |
+| 🤖 **Verdict pipeline (Claude)** | ① Screen every new paper's title + abstract into a relevance tier (Haiku) → ② review the relevant ones on the first part of the paper: verdict *Must Read / Worth Reading / Skim / Skip* + relevance · novelty · evidence · reusability + affiliations (Sonnet) → ③ deep-read the Must Read / Worth Reading papers in full: final verdict, TL;DR, paragraph notes, flagged claims |
+| 📖 **Bilingual reading page** | `/read/<id>`: the paper paragraph by paragraph — original English on the left, a Chinese gist and full translation on the right; questionable / big claims highlighted in the original with the reason; figures inline (broken TikZ figures and scaled tables cropped from the PDF) |
+| ⭐ **Daily Picks** | `/picks`: Must Read / Worth Reading papers by day, with TL;DR, claim flags and project tags |
+| 📁 **Projects** | Named collections of papers (web page + MCP). New papers are recalled for each project by embedding similarity to its seed papers and description and by the screen model; the reviewer confirms each match |
+| 🔥 **Hot papers** | Popular papers from Hugging Face Daily Papers (upvotes / GitHub stars) get their own digest section, relevant or not, each pushed once |
+| 💳 **Claude API or OpenRouter** | Chat models through the Claude API (Message Batches API at 50% off, prompt caching) or through OpenRouter (real time); a per-cycle budget cap trims or skips stages once it is used up |
+| ⚙️ **Everything editable in the UI** | All `.env` keys (keys, models, budget, categories, schedule, profile, Lark webhook) edited from Settings, written back to the env file and hot-applied — secrets never leave the server |
+| 🤝 **MCP server for agents** | `mcp_server/` exposes the instance to Claude Code & co.: semantic search, recent papers, people-of-interest lookup, paper details / full text, deep reads, projects, BibTeX, and write-back of scores and important people |
+| 🔎 **Semantic search & related papers** | Title+abstract embeddings (voyage-4 via OpenRouter, 512-d), generated on ingestion and caught up every night: describe what you want instead of guessing title words; every paper page lists its nearest neighbours |
 | 📚 **BibTeX library** | Citation entries for any arXiv paper (paper-page button / API / MCP): `@inproceedings{booktitle}` for conferences, `@article{journal}` for journals and preprints. Agent-driven — the server never guesses venues; the agent verifies unchecked entries (arXiv comment hints, DBLP, OpenReview, ...) and writes the verdict back once, so it is never looked up again. Can sync a whole pasted `.bib`. Cite keys never change |
 | 📬 **Notifications** | Pushes daily digest to Lark (飞书) via webhook; an arXiv API outage (errors / empty feed after retries) is pushed as an alert instead of a misleading "no new papers" |
 | 🌐 **Web UI** | Beautiful dark-theme interface with day-by-day infinite scroll |
 | 🎚️ **Adjustable Threshold** | Filter papers by score with a live slider |
-| 🔄 **Per-Paper Refresh** | Re-summarize any paper on demand |
+| 🔄 **On-demand deep read** | Deep-read any paper from its page or over MCP |
 | 🏆 **Author Rankings** | Browse top authors ranked by paper count with time-range filtering |
 | 👤 **Author Detail** | Edit author bio/website/affiliation and mark implementation authors for score boosting |
 | 🐳 **Docker Ready** | Single-container deployment with LinuxServer.io-style config |
@@ -45,6 +46,7 @@ Names are reserved for feature milestones; patch releases intentionally have no 
 
 | Version | Name | Highlights |
 |---------|------|------------|
+| **2.0.0** | *Pipeline Update* | **Breaking.** Scoring rebuilt on Claude: screen (relevance tier) → review (verdict Must Read / Worth Reading / Skim / Skip, relevance · novelty · evidence · reusability, affiliations) → deep read (final verdict, TL;DR, paragraph gists, claim flags) + Chinese translation; verdicts map onto the 0-100 score (Worth Reading 85-91, Must Read 92-99) so filters and the push threshold keep working. Claude API with the Message Batches API and prompt caching, or OpenRouter's Anthropic-compatible endpoint (`CHAT_PROVIDER`); per-cycle spend cap (`CLAUDE_MONTHLY_BUDGET`) and a nightly deep-read cap. Bilingual reading page `/read/<id>` (arXiv HTML split into paragraphs, broken TikZ figures / scaled tables cropped from the PDF), Daily Picks `/picks`, Projects (embedding + screen recall, reviewer confirmation; web page + 7 MCP tools), hot papers from Hugging Face Daily Papers, deep-read API + MCP tools. Embeddings generated on ingestion and caught up nightly. **Removed:** the two-stage pipeline and its settings, long structured summaries (TL;DR only), daily / weekly / monthly reports, cost estimates, the legacy `OPENAI_API_KEY` / `OPENAI_BASE_URL`. Old scores, summaries and reviews are kept and reused |
 | **1.3.0** | *Bib2 Update* | `fix_bibtex` now cuts every paper entry of a pasted `.bib` down to four fields (title / author / booktitle or journal / year): published `@inproceedings` / `@article` entries lose pages, volume, publisher, doi, url, …, unpublished arXiv entries become `journal = {arXiv preprint arXiv:<id>}`, values are copied as written (`@string` macros kept), other entry kinds stay untouched; official author lists — `set_bibtex_status` takes `authors` for a published paper and from then on they replace the arXiv list in library entries and `fix_bibtex` rewrites (new `bibentry.published_authors`, migration 005); stricter venue naming in the MCP tool descriptions (bare conference abbreviations, `NIPS` up to 2017 / `NeurIPS` from 2018, no extra fields); `skills/fix-bib` — a stateless Claude Code skill that does the same one-shot fix without a server, for collaborators |
 | **1.2.1** | — | BibTeX titles wrapped in double braces (`title = {{...}}`) so styles that lowercase titles keep acronyms like SAM / OMG-Seg / 3D; MCP install docs now recommend pinning to a release tag via `uvx --from git+...@vX.Y.Z` |
 | **1.2.0** | *Bib Update* | BibTeX library driven by the agent over MCP (`get_bibtex`, `bibtex_venue_hints`, `set_bibtex_status`, `fix_bibtex`): any arXiv paper becomes `@inproceedings{booktitle}` (conference) / `@article{journal}` (journal or arXiv preprint); the server never guesses venues — the agent verifies `needs_check` entries and writes the verdict back once (`published` is final, "still a preprint" re-flagged after 30 days); pasted `.bib` files synced with stable cite keys; BibTeX copy button on the paper page. arXiv API hardening: retries with back-off, error / empty feeds detected, and an outage now pushes a Lark alert instead of the misleading "no new papers" message |
@@ -68,26 +70,29 @@ Names are reserved for feature milestones; patch releases intentionally have no 
 
 ---
 
-## 🧠 How scoring works (v0.4)
+## 🧠 How scoring works (v2)
 
 ```
-arXiv fetch ─► Stage 1 (cheap model, title+abstract) ─► score ≥ STAGE2_THRESHOLD? ──no──► FILTERED
-                                                            │ yes
-                                                            ▼
-                              Stage 2 (strong model, abstract + first ~8k chars of the PDF,
-                              rubric = relevance · novelty · quality · clarity) ─► final score
-                                                            │
-                                   final ≥ SCORE_THRESHOLD ─┴─► full-text summary ─► Lark digest
+arXiv fetch ─► ① screen (Haiku, title + abstract) ─► relevance ≥ SCREEN_MIN_RELEVANCE or a project candidate? ──no──► FILTERED
+                                                         │ yes
+                                                         ▼
+               ② review (Sonnet, abstract + first STAGE2_TEXT_CHAR_LIMIT chars)
+               verdict + relevance · novelty · evidence · reusability + affiliations + project matches
+                                                         │ Must Read / Worth Reading
+                                                         ▼
+               ③ deep read (Sonnet, whole paper as paragraphs) ─► final verdict, TL;DR, gists, claim flags
+               + translation (Haiku)                         ─► reading page, Lark digest
 ```
 
-- Stage 1 is tuned for **recall** (when torn between two relevance levels, pick the higher); stage 2 for **precision** and is the only stage that judges *quality of evidence* (baselines, ablations, scale, code).
-- The PDF text fetched for stage 2 is cached on the paper and reused by summarization.
-- Every LLM call is logged with tokens + cost (`GET /api/llm/usage`); the Settings page shows real spend and a live estimate for any model selection.
-- A manual score (`PATCH /api/papers/{id}/score`, or click the score badge in the UI) still overrides everything and disables re-scoring.
+- Score: screen = 20 × relevance; review / deep read map the verdict onto a band — Must Read 92-99, Worth Reading 85-91, Skim 60-84, Skip 20-59 (position from novelty + evidence + reusability). The digest pushes papers ≥ 85. Important authors are lifted to ≥ 90; a manual score overrides everything.
+- Every relevance judgement follows the profile's tiers (all core items equal; analyses, benchmarks and data count like methods; agents on any platform are agents).
+- Nightly stages go through the Message Batches API (one batch per stage, 50% off; anything unfinished after `BATCH_MAX_WAIT_MINUTES` is retried in real time). On-demand deep reads run in real time.
+- `CLAUDE_MONTHLY_BUDGET` caps the estimated spend per billing cycle (`CLAUDE_BUDGET_RESET_DAY`); stages are trimmed or skipped once it is used up and the papers wait. `DEEP_READ_MAX_PER_RUN` caps deep reads per night (Must Read first).
+- Papers scored by the old two-stage pipeline keep their scores; a deep read of such a paper reuses its old review.
 
 ### Embeddings & retrieval
 
-Every new paper is embedded (title + abstract) during the run through the provider's OpenAI-compatible `/embeddings` endpoint — default `voyageai/voyage-4` truncated to 512 dimensions (≈ $0.001/day; backfilling history ≈ $0.02 per 1k papers). Vectors are stored in the `paperembedding` table (model + dim recorded, so a model switch is detected and shown as "missing" until you Backfill) and served from an in-memory, L2-normalised matrix: brute-force cosine, no vector database. Three things use it: the **Semantic** toggle of the search box, **Related papers** at the bottom of every paper page, and the topic clusters that are pre-computed for reports (k-means, cosine) so the LLM's "Topic Trends" starts from real structure.
+Every paper is embedded (title + abstract) when it enters the library, and each nightly run embeds whatever is still missing (up to `EMBED_CATCHUP_PER_RUN`), through OpenRouter's `/embeddings` endpoint — default `voyageai/voyage-4` truncated to 512 dimensions (≈ $0.001/day). Vectors are stored in the `paperembedding` table (model + dim recorded, so a model switch is detected) and served from an in-memory, L2-normalised matrix: brute-force cosine, no vector database. They power the **Semantic** toggle of the search box, **Related papers** on every paper page, and project recall.
 
 `compact=true` (and the POST search by default) returns small agent-friendly records — `id, title, authors, published_at, category, score, user_score, status, main_affiliation, main_company, reason, tldr, has_summary, pdf_url, abs_url` (+ `similarity`) — no full text or raw JSON.
 
@@ -102,18 +107,6 @@ Four fields per entry, typed by where the paper appeared:
 ```
 
 Freshly fetched arXiv papers are normally not accepted anywhere, so the server never looks venues up. Entries start as `unchecked`; when citing, the agent (MCP) checks every entry in `needs_check` — `bibtex_venue_hints` gives the current arXiv comment / journal_ref ("Accepted to CVPR 2026"), the agent confirms elsewhere if needed — and writes the verdict back with `set_bibtex_status`. `published` is final (never checked again); `preprint` ("checked, not yet") is trusted for 30 days, then flagged again. The venue is stored exactly as the agent writes it; the naming convention (conference short names, short names for well-known journals such as IEEE TPAMI / IJCV, otherwise the full name) is part of the MCP tool descriptions. Titles are wrapped in double braces (`title = {{...}}`) so styles that lowercase titles keep SAM / OMG-Seg / 3D intact; `fix_bibtex` keeps the title text of a pasted entry as written. Cite keys (`lastname` + arXiv year + first title word) are fixed at creation so LaTeX sources keep compiling.
-
-### Reports
-
-After the digest, the run generates whichever reports are due and sends them as extra Lark cards right behind it:
-
-| Report | When | Covers |
-|---|---|---|
-| 📰 Daily | after every run that pushed papers | the papers pushed in that run |
-| 📊 Weekly | on `REPORT_WEEKLY_DAY` (default Monday, UTC) | the previous 7 days (papers ≥ `SCORE_THRESHOLD`) |
-| 📈 Monthly | on the 1st | the previous calendar month |
-
-Python computes the statistics first (selected / fetched / stage-2 counts, company & university counts **with deltas vs. the previous period**, categories, top and important authors, score distribution, LLM cost); the report model then writes the narrative from those numbers plus the paper list — topic clusters with cited arXiv ids, institution moves, must-read top 5, emerging signals. Reports live in the **Reports** page (generate any period on demand, push to Lark, delete) and are written in `SUMMARY_LANGUAGE`.
 
 ---
 
@@ -131,14 +124,14 @@ Copy `.env.example` → `.env` and fill in your API key — everything else can 
 
 ```env
 DATABASE_URL="sqlite:///./paper_agent.db"
-OPENROUTER_API_KEY="sk-or-..."          # or legacy OPENAI_API_KEY / OPENAI_BASE_URL
+ANTHROPIC_API_KEY="sk-ant-..."          # chat models (or CHAT_PROVIDER="openrouter" to use the OpenRouter key)
+OPENROUTER_API_KEY="sk-or-..."          # embeddings
 
-# Default models (override anytime from the Settings page)
-LLM_MODEL_STAGE1="openai/gpt-4o-mini"
-LLM_MODEL_STAGE2="anthropic/claude-sonnet-5"
-LLM_MODEL_SUMMARY="openai/gpt-4o-mini"
-STAGE2_THRESHOLD=60    # stage-1 score that triggers the stage-2 review
-SCORE_THRESHOLD=85     # final score that triggers summary + notification
+# Defaults (override anytime from the Settings page)
+LLM_MODEL_STAGE1="claude-haiku-5-5"     # screen
+LLM_MODEL_STAGE2="claude-sonnet-5-5"    # review
+LLM_MODEL_SUMMARY="claude-sonnet-5-5"   # deep read
+CLAUDE_MONTHLY_BUDGET=80
 
 # Optional: Lark Notification
 LARK_WEBHOOK_URL="https://open.larksuite.com/open-apis/bot/v2/hook/..."
@@ -180,24 +173,34 @@ docker-compose up -d
 |----------|-------------|---------|
 | `PUID` / `PGID` | User/Group ID | `1000` |
 | `DATABASE_URL` | SQLite path | `sqlite:////config/paper_agent.db` |
-| `OPENROUTER_API_KEY` | OpenRouter API key (preferred; `OPENAI_API_KEY`+`OPENAI_BASE_URL` still work as fallback) | — |
-| `LLM_MODEL_STAGE1` / `LLM_MODEL_STAGE2` / `LLM_MODEL_SUMMARY` | Model ids per task (editable in the UI, written back to `/config/.env`) | `openai/gpt-4o-mini` / `anthropic/claude-sonnet-5` / `openai/gpt-4o-mini` |
-| `STAGE2_THRESHOLD` / `SCORE_THRESHOLD` | Stage-2 trigger / summarize+notify thresholds | `60` / `85` |
+| `ANTHROPIC_API_KEY` | Claude Console key (chat models when `CHAT_PROVIDER=anthropic`) | — |
+| `OPENROUTER_API_KEY` | OpenRouter key: embeddings, and chat models when `CHAT_PROVIDER=openrouter` | — |
+| `CHAT_PROVIDER` | `anthropic` (Batch API available) or `openrouter` (real time only) | `anthropic` |
+| `LLM_MODEL_STAGE1` / `LLM_MODEL_STAGE2` / `LLM_MODEL_SUMMARY` / `LLM_MODEL_TRANSLATE` | Screen / review / deep read / translation models (non-Claude ids fall back to the defaults) | `claude-haiku-5-5` / `claude-sonnet-5-5` / `claude-sonnet-5-5` / `claude-haiku-5-5` |
+| `SCREEN_MIN_RELEVANCE` / `DEEP_READ_MAX_PER_RUN` | Screen tier needed for review / deep reads per night | `4` / `12` |
+| `LLM_USE_BATCH` / `BATCH_MAX_WAIT_MINUTES` | Message Batches API for nightly stages / wait before real-time retry | `true` / `240` |
+| `CLAUDE_MONTHLY_BUDGET` / `CLAUDE_BUDGET_RESET_DAY` | Spend cap per billing cycle (USD) / day the cycle resets | `80` / `1` |
+| `PROJECT_SIM_THRESHOLD` | Embedding cosine for project recall | `0.74` |
+| `HOT_ENABLED` / `HOT_MIN_UPVOTES` / `HOT_MIN_STARS` / `HOT_MAX_PER_RUN` | Hot-paper section | `true` / `50` / `500` / `5` |
+| `PUBLIC_BASE_URL` | Base URL for reading-page links in Lark, e.g. `http://nas:8000` | — |
 | `SUMMARY_LANGUAGE` | `EN` or `CN` | `EN` |
 | `ENABLE_AUTO_UPDATE` | Daily auto-fetch | `false` |
 | `AUTO_UPDATE_TIME` | Fetch time (UTC) | `04:00` |
 | `ARXIV_CATEGORIES` | JSON list of arXiv categories to fetch | `["cs.CV","cs.CL","cs.AI"]` |
 | `USER_PROFILE` | Your research-interest prompt (drives scoring + summaries) | generic CV/MM profile |
 | `LARK_WEBHOOK_URL` | Lark (飞书) bot webhook; empty = no notifications | — |
-| `STAGE2_TEXT_CHAR_LIMIT` | Chars of PDF text shown to the stage-2 reviewer | `8000` |
-| `LLM_MODEL_REPORT` | Model for the trend reports | `anthropic/claude-sonnet-5` |
+| `STAGE2_TEXT_CHAR_LIMIT` | Chars of paper text shown to the reviewer | `20000` |
 | `EMBEDDING_MODEL` / `EMBEDDING_DIM` | Embedding model (OpenRouter `/embeddings/models`) and dimensions (0 = native) | `voyageai/voyage-4` / `512` |
-| `REPORT_DAILY_ENABLED` / `REPORT_WEEKLY_ENABLED` / `REPORT_MONTHLY_ENABLED` | Which reports to generate and push | `true` |
-| `REPORT_WEEKLY_DAY` | Weekday for the weekly report (0 = Monday … 6 = Sunday, UTC) | `0` |
 
 Everything except `PUID`/`PGID`/`DATABASE_URL` can also be edited at runtime from the Settings page (see below). The image exposes port `8000` and persists DB + `.env` in the `/config` volume.
 
 **Access:** Web UI at `http://localhost:8000` · API under `http://localhost:8000/api/...` · API docs at `http://localhost:8000/docs`
+
+### Upgrading from 1.x to 2.0
+
+1. `docker compose pull && docker compose up -d`. New tables are created on first start; existing tables are unchanged.
+2. In Settings, set `ANTHROPIC_API_KEY` (or switch "Chat models via" to OpenRouter), set `PUBLIC_BASE_URL`, and `CLAUDE_BUDGET_RESET_DAY` to your billing day. Old non-Claude model ids are ignored (a warning on the Settings page says which).
+3. Existing papers keep their scores, summaries (the paper page shows only the TL;DR) and reviews; the reports table is no longer used. Obsolete keys left in `/config/.env` (`STAGE2_THRESHOLD`, `REPORT_*`, `OPENAI_*`, …) are ignored.
 
 ### Upgrading from 0.3.x to 0.4
 
@@ -210,7 +213,7 @@ Everything except `PUID`/`PGID`/`DATABASE_URL` can also be edited at runtime fro
 
 ## ⚙️ Configuration & precedence
 
-All configuration lives in one dotenv file — `/config/.env` in Docker (the volume), `./.env` in local dev — and **every key can be edited from the Settings page**. Saving rewrites only the changed keys in that file (comments, order and other keys are preserved byte-for-byte, written atomically) and hot-applies the new values, so no restart is needed — including the daily schedule, which is re-armed live. Secrets (`OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `LARK_WEBHOOK_URL`) are never sent to the browser: the UI only sees *configured + last 4 chars*; leave a secret field blank to keep it, type a new value to replace it.
+All configuration lives in one dotenv file — `/config/.env` in Docker (the volume), `./.env` in local dev — and **every key can be edited from the Settings page**. Saving rewrites only the changed keys in that file (comments, order and other keys are preserved byte-for-byte, written atomically) and hot-applies the new values, so no restart is needed — including the daily schedule, which is re-armed live. Secrets (`ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`, `LARK_WEBHOOK_URL`) are never sent to the browser: the UI only sees *configured + last 4 chars*; leave a secret field blank to keep it, type a new value to replace it.
 
 Resolution order, highest first:
 
@@ -218,7 +221,7 @@ Resolution order, highest first:
 |---|--------|-------|
 | 1 | **Process environment variables** (`environment:` in `docker-compose.yml`, shell vars) | Outrank the file. The Settings page flags such keys with an **env var** badge and warns that saving will not take effect until the variable is removed from the container environment. |
 | 2 | **The env file** — `/config/.env` (Docker) or `./.env` (local) | What the Settings page reads and writes. If both exist, `./.env` wins (pydantic-settings loads `/config/.env` then `.env`). |
-| 3 | Code defaults in `src/config.py` | Shown with a **default** badge until you save a value. |
+| 3 | Code defaults in `src/config.py` | Used until you save a value. |
 
 Read-only in the UI: `DATABASE_URL` (set by the container) and `DEV_COMMIT` (developer flag). The `USER_PROFILE` prompt is edited in its own card and stored in the same file (multi-line values are dotenv-escaped and round-trip exactly).
 
@@ -235,9 +238,15 @@ All endpoints are served under the **`/api`** prefix (e.g. `GET /api/papers`) so
 | `GET` | `/api/papers/search` | Search papers by title (`?q=query`, `?compact=true`) |
 | `GET` | `/api/papers/{id}` | Get single paper details |
 | `POST` | `/api/papers/add` | Add paper by arXiv ID or URL |
-| `POST` | `/api/papers/{id}/resummarize` | Re-summarize a paper with LLM |
+| `POST` | `/api/papers/{id}/deep-read?force=` | Deep read now (real time): review if needed, final verdict, TL;DR, paragraph notes, claim flags, translation |
+| `GET` | `/api/papers/{id}/reading?full=` | Deep-read status, verdict and verified claim flags (`full=true`: units, notes, translations) |
+| `POST` | `/api/papers/{id}/resummarize` | Redo the deep read |
 | `PATCH` | `/api/papers/{id}/score?score=N` | Set a manual score (overrides AI, disables re-scoring) |
-| `POST` | `/api/papers/re-score-date?date=YYYY-MM-DD` | Re-score all papers for a date |
+| `POST` | `/api/papers/re-score-date?date=YYYY-MM-DD` | Re-run the pipeline on all papers of a date (Batch API) |
+| `GET` / `POST` / `PATCH` / `DELETE` | `/api/projects` · `/api/projects/{id or name}` | List / create (`name`, `description`, `keywords`, `seed_paper_ids`) / edit / delete projects |
+| `POST` / `DELETE` | `/api/projects/{key}/papers` · `/api/projects/{key}/papers/{id}` | Add papers (`manual` or `seed`) / remove one |
+| `GET` | `/api/projects/{key}/suggestions?k=` | Library papers closest to the project that are not in it yet |
+| `GET` | `/api/claude/budget` · `/api/claude/models` | Spend this billing cycle vs the cap · Claude models with list prices |
 | `GET` | `/api/papers/start-date` · `/api/papers/next-date?date=` | Pagination helpers for the day-by-day feed |
 | `GET` | `/api/papers/recent?days=&min_score=&status=&category=&limit=&compact=` | Recent papers, newest first (compact by default) |
 | `GET` | `/api/authors` | Ranked author list (optional `?days=N`) |
@@ -249,18 +258,13 @@ All endpoints are served under the **`/api`** prefix (e.g. `GET /api/papers`) so
 | `GET` | `/api/settings` | Every editable setting with effective value, source (env var / file / default) and schema; secrets masked |
 | `PUT` | `/api/settings` | `{"values": {KEY: value, ...}}` — validates, rewrites the env file, hot-applies (schedule changes re-arm the scheduler) |
 | `PUT` | `/api/settings/profile` | `{"profile": "..."}` — update `USER_PROFILE` |
-| `GET` | `/api/settings/llm` | Current models, thresholds, provider status |
-| `PUT` | `/api/settings/llm` | Update `stage1_model` / `stage2_model` / `summary_model` / `stage2_threshold` / `score_threshold` |
-| `GET` | `/api/models` | Provider model catalog with list prices (`?q=` filter, `?refresh=true`) |
-| `GET` | `/api/llm/usage` | Real spend: today / 7d / 30d / all-time + per task/model breakdown |
-| `GET` | `/api/llm/estimate` | Projected cost per day/month for a model selection (query params override current settings) |
+| `GET` | `/api/settings/llm` | Current models, gates, provider status, warnings |
+| `PUT` | `/api/settings/llm` | Update `stage1_model` / `stage2_model` / `summary_model` / `translate_model` (Claude ids) |
+| `GET` | `/api/llm/usage` | Spend: today / 7d / 30d / all-time + per task/model breakdown |
 | `GET` | `/api/papers/semantic-search?q=&limit=&days=&min_score=&category=&compact=` | Embedding search; returns papers with cosine `similarity` |
 | `POST` | `/api/papers/semantic-search` | Agent-friendly search: `{"query"?, "paper_ids"? (seeds), "days"/"since"/"until", "min_score", "status", "category", "exclude_ids", "limit", "compact"}` |
 | `GET` | `/api/papers/{id}/related?k=` | Nearest neighbours of a paper (`available=false` until it has a vector) |
 | `GET` / `POST` | `/api/embeddings/status` · `/api/embeddings/backfill` · `/api/embeddings/reload` · `/api/embeddings/models` | Coverage, background backfill, index reload, embedding model list |
-| `GET` | `/api/reports` · `/api/reports/{id}` | List (`?kind=daily\|weekly\|monthly`) / read trend reports |
-| `POST` | `/api/reports/generate` | `{"kind": "weekly", "date": "YYYY-MM-DD"}` — generate or regenerate a report on demand (rate-limited) |
-| `POST` / `DELETE` | `/api/reports/{id}/push` · `/api/reports/{id}` | Push a report to Lark / delete it |
 | `GET` | `/api/bibtex?ids=` | BibTeX for arXiv ids (new ones added as unchecked); no `ids` = whole library. Returns `bibtex`, per-entry status and `needs_check` |
 | `GET` | `/api/bibtex/hints?ids=` | Read-only venue evidence from the current arXiv record (raw comment / journal_ref / DOI) |
 | `PUT` | `/api/bibtex/{id}/status` | `{"status": "published", "venue": "CVPR", "venue_type": "conference", "year": 2026, "evidence"?}` — or `"preprint"` (checked, not yet) / `"unchecked"` (reset) |
@@ -268,6 +272,7 @@ All endpoints are served under the **`/api`** prefix (e.g. `GET /api/papers`) so
 | `POST` | `/api/bibtex/fix` | `{"bibtex": "..."}` — sync a pasted .bib with the library (no lookups); returns what still `needs_check` |
 | `WS` | `/api/ws/logs` | Live log stream (used by the in-app log viewer) |
 | `GET` | `/health` · `/api/health` | Liveness probe |
+| `GET` | `/read/{id}` · `/picks?date=&days=` | Bilingual reading page · Daily Picks (server-rendered HTML) |
 
 ---
 
@@ -276,12 +281,12 @@ All endpoints are served under the **`/api`** prefix (e.g. `GET /api/papers`) so
 `mcp_server/` is a small separate package (`paper-agent-mcp`, stdio) with explicit tools over the API — see [`mcp_server/README.md`](mcp_server/README.md) for the tool list. Register it in Claude Code, pinned to the release that matches your server:
 
 ```bash
-claude mcp add --scope user paper-agent -- uvx --from "git+https://github.com/HarborYuan/paper_agent@v1.3.0#subdirectory=mcp_server" paper-agent-mcp --base-url http://nas:8000
+claude mcp add --scope user paper-agent -- uvx --from "git+https://github.com/HarborYuan/paper_agent@v2.0.0#subdirectory=mcp_server" paper-agent-mcp --base-url http://nas:8000
 ```
 
 (To hack on the MCP server itself, register `uv run --directory /path/to/paper_agent/mcp_server paper-agent-mcp ...` instead — see its README.)
 
-Typical asks: *"what did the people in my POI list publish this month"* (`papers_by_people`), *"papers from the last two weeks related to 2608.19556"* (`search_papers` with seeds), *"read 2608.18607 for me"* (`get_paper` with text), *"summarise this week's report"* (`list_reports` / `get_report`), *"mark 2608.18607 as 95, I read it"* (`set_user_score`).
+Typical asks: *"what did the people in my POI list publish this month"* (`papers_by_people`), *"papers from the last two weeks related to 2608.19556"* (`search_papers` with seeds), *"read 2608.18607 for me"* (`get_paper` with text), *"deep-read 2611.23034"* (`deep_read_paper` / `get_deep_read`), *"add these three papers to my-tokenizer-project"* (`add_papers_to_project`), *"mark 2608.18607 as 95, I read it"* (`set_user_score`).
 
 ---
 
@@ -295,4 +300,4 @@ cd frontend && npm install && npm run dev   # Vite dev server on :5173, proxies 
 cd frontend && npm run build             # production bundle -> frontend/dist
 ```
 
-Layout: `src/main.py` (FastAPI routes), `src/worker.py` (fetch → two-stage score → summarize → notify), `src/services/` (arxiv, llm, pdf, notifier, model_catalog, settings_service, env_file, usage_service), `src/prompts/*.jinja2`, `src/migrations.py` (numbered, run automatically at startup), `frontend/src/` (React 19 + Vite + Tailwind). Docker image = `node` build stage for the frontend + `linuxserver/baseimage-alpine` + `uv`; pushing a `v*.*.*` tag publishes `harbory/paper-agent:<version>` and `:latest`, pushing `main` publishes `:dev`.
+Layout: `src/main.py` (FastAPI routes), `src/worker.py` (fetch → embed → hot refresh → verdict pipeline → notify), `src/services/` (verdict_pipeline, claude_runner, claude_budget, reading_service, reading_page, project_service, hot_service, arxiv, pdf, embedding_service, notifier, settings_service, env_file, usage_service), `src/prompts/*.jinja2`, `src/migrations.py` (numbered, run automatically at startup), `frontend/src/` (React 19 + Vite + Tailwind). Docker image = `node` build stage for the frontend + `linuxserver/baseimage-alpine` + `uv`; pushing a `v*.*.*` tag publishes `harbory/paper-agent:<version>` and `:latest`, pushing `main` publishes `:dev`.

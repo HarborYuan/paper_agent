@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import axios from 'axios';
 import { format, subDays, isToday, isYesterday } from 'date-fns';
 import Masonry from 'react-masonry-css';
-import { RefreshCw, Zap, Plus, X, Terminal, Users, Settings, Search, Newspaper, Sparkles } from 'lucide-react';
+import { RefreshCw, Zap, Plus, X, Terminal, Users, Settings, Search, Sparkles, FolderKanban, Star } from 'lucide-react';
 import { useInView } from 'react-intersection-observer';
 import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
 
@@ -12,7 +12,7 @@ import PaperDetail from './pages/PaperDetail';
 import Authors from './pages/Authors';
 import AuthorDetail from './pages/AuthorDetail';
 import SettingsPage from './pages/Settings';
-import Reports from './pages/Reports';
+import Projects from './pages/Projects';
 import LogViewer from './components/LogViewer';
 
 const API_URL = '/api'; // All backend endpoints live under /api (same origin)
@@ -332,9 +332,9 @@ function AppContent() {
 
       {/* Header */}
       <header className="max-w-7xl mx-auto mb-10">
-        <div className="flex justify-between items-end mb-6">
+        <div className="flex flex-wrap justify-between items-start gap-x-8 gap-y-4 mb-5">
           <div>
-            <h1 className="text-4xl md:text-5xl font-black text-white mb-2">
+            <h1 className="text-4xl md:text-5xl font-black text-white mb-2 whitespace-nowrap">
               Paper <span className="text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-blue-500">Agent</span>
             </h1>
             <p className="text-slate-400 font-medium font-display">
@@ -342,71 +342,63 @@ function AppContent() {
             </p>
           </div>
 
-          <div className="flex items-center gap-4">
-            {/* Logs Button */}
-            <button
-              onClick={() => setShowLogs(true)}
-              className="flex items-center gap-2 px-3 py-2 rounded-lg font-bold bg-slate-800 text-cyan-400 hover:bg-slate-700 transition-all border border-slate-700"
-              title="View Logs"
-            >
-              <Terminal size={18} />
-            </button>
+          {/* Navigation */}
+          <nav className="flex flex-wrap items-center gap-1 bg-slate-800/60 border border-slate-700 rounded-xl p-1">
+            {[
+              { href: '/picks', label: 'Picks', icon: Star, external: true },
+              { href: '/projects', label: 'Projects', icon: FolderKanban },
+              { href: '/authors', label: 'Authors', icon: Users },
+              { href: '/settings', label: 'Settings', icon: Settings },
+            ].map(({ href, label, icon: Icon, external }) => {
+              const cls = "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold text-slate-300 hover:text-white hover:bg-slate-700 transition-colors whitespace-nowrap";
+              return external
+                ? <a key={href} href={href} className={cls}><Icon size={15} />{label}</a>
+                : <Link key={href} to={href} className={cls}><Icon size={15} />{label}</Link>;
+            })}
+          </nav>
+        </div>
 
-            {/* Threshold Slider */}
-            <div className="flex items-center gap-3">
-              <span className="text-sm font-medium text-slate-400">Score ≥</span>
-              <input
-                type="range"
-                min={0}
-                max={100}
-                value={scoreThreshold}
-                onChange={(e) => setScoreThreshold(Number(e.target.value))}
-                className="w-24 h-1.5 bg-slate-700 rounded-full appearance-none cursor-pointer accent-cyan-500"
-              />
-              <span className="text-sm font-bold text-cyan-400 w-8 text-center tabular-nums">{scoreThreshold}</span>
-            </div>
+        {/* Controls */}
+        <div className="flex flex-wrap items-center gap-3 mb-6">
+          <button
+            onClick={triggerRun}
+            disabled={running}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold whitespace-nowrap transition-all ${running ? 'bg-slate-700 text-slate-500 cursor-wait' : 'bg-cyan-500 text-slate-900 hover:bg-cyan-400 shadow-lg hover:shadow-cyan-500/25'}`}
+          >
+            <RefreshCw size={18} className={running ? 'animate-spin' : ''} />
+            {running ? 'Processing...' : 'Fetch New'}
+          </button>
 
-            <button
-              onClick={triggerRun}
-              disabled={running}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold transition-all ${running ? 'bg-slate-700 text-slate-500 cursor-wait' : 'bg-cyan-500 text-slate-900 hover:bg-cyan-400 shadow-lg hover:shadow-cyan-500/25'}`}
-            >
-              <RefreshCw size={18} className={running ? 'animate-spin' : ''} />
-              {running ? 'Processing...' : 'Fetch New'}
-            </button>
+          <button
+            onClick={() => setShowAddModal(true)}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg font-bold whitespace-nowrap bg-slate-700 text-slate-200 hover:bg-slate-600 transition-all"
+          >
+            <Plus size={18} />
+            Add Paper
+          </button>
 
-            <button
-              onClick={() => setShowAddModal(true)}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg font-bold bg-slate-700 text-slate-200 hover:bg-slate-600 transition-all"
-            >
-              <Plus size={18} />
-              Add Paper
-            </button>
-
-            <Link
-              to="/authors"
-              className="flex items-center gap-2 px-4 py-2 rounded-lg font-bold bg-slate-800 text-slate-200 hover:bg-slate-700 transition-all border border-slate-700"
-            >
-              <Users size={18} />
-              Authors
-            </Link>
-
-            <Link
-              to="/reports"
-              className="flex items-center gap-2 px-4 py-2 rounded-lg font-bold bg-slate-800 text-slate-200 hover:bg-slate-700 transition-all border border-slate-700"
-            >
-              <Newspaper size={18} />
-              Reports
-            </Link>
-
-            <Link
-              to="/settings"
-              className="flex items-center gap-2 px-4 py-2 rounded-lg font-bold bg-slate-800 text-slate-200 hover:bg-slate-700 transition-all border border-slate-700"
-            >
-              <Settings size={18} />
-              Settings
-            </Link>
+          {/* Threshold Slider */}
+          <div className="flex items-center gap-3 px-3 py-2 rounded-lg bg-slate-800/60 border border-slate-700">
+            <span className="text-sm font-medium text-slate-400 whitespace-nowrap">Score ≥</span>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              value={scoreThreshold}
+              onChange={(e) => setScoreThreshold(Number(e.target.value))}
+              className="w-28 h-1.5 bg-slate-700 rounded-full appearance-none cursor-pointer accent-cyan-500"
+            />
+            <span className="text-sm font-bold text-cyan-400 w-8 text-center tabular-nums">{scoreThreshold}</span>
           </div>
+
+          {/* Logs Button */}
+          <button
+            onClick={() => setShowLogs(true)}
+            className="ml-auto flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold whitespace-nowrap bg-slate-800 text-cyan-400 hover:bg-slate-700 transition-all border border-slate-700"
+            title="View Logs"
+          >
+            <Terminal size={16} /> Logs
+          </button>
         </div>
 
         {/* Search Row */}
@@ -572,7 +564,7 @@ function App() {
         <Route path="/paper/:id" element={<PaperDetail />} />
         <Route path="/authors" element={<Authors />} />
         <Route path="/author/:name" element={<AuthorDetail />} />
-        <Route path="/reports" element={<Reports />} />
+        <Route path="/projects" element={<Projects />} />
         <Route path="/settings" element={<SettingsPage />} />
       </Routes>
     </BrowserRouter>

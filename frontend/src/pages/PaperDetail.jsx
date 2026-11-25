@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import axios from 'axios';
-import { ArrowLeft, Calendar, Users, ExternalLink, Star, Building2, Tag, RefreshCw, Quote, Check } from 'lucide-react';
+import { ArrowLeft, Calendar, Users, ExternalLink, Star, Building2, Tag, Quote, Check, BookOpen } from 'lucide-react';
 import { format } from 'date-fns';
 import ReactMarkdown from 'react-markdown';
 import ScoreBreakdown from '../components/ScoreBreakdown';
@@ -9,15 +9,74 @@ import RelatedPapers from '../components/RelatedPapers';
 
 const API_URL = '/api'; // All backend endpoints live under /api (same origin)
 
+// Only the "## TL;DR" section is shown; older papers may still carry the long structured summary in the DB.
+function tldrOnly(md) {
+    const text = (md || '').replace(/^```[a-zA-Z]*\n?/i, '').replace(/\n?```$/i, '').trim();
+    const lines = text.split('\n');
+    const start = lines.findIndex(l => /^##\s*TL;?DR/i.test(l));
+    if (start < 0) return text;
+    const rest = lines.slice(start + 1);
+    const end = rest.findIndex(l => /^##\s/.test(l));
+    return (end < 0 ? rest : rest.slice(0, end)).join('\n').trim();
+}
+
 const PaperDetail = () => {
     const { id } = useParams();
     const navigate = useNavigate();
     const [paper, setPaper] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
-    const [refreshing, setRefreshing] = useState(false);
     const [bibState, setBibState] = useState('idle'); // idle | loading | copied | error
     const [bibJournal, setBibJournal] = useState(null);
+    const [deepState, setDeepState] = useState('NONE'); // NONE | PENDING | RUNNING | DONE | ERROR | STARTING
+
+    // Deep read (verdict pipeline): bilingual reading page at /read/:id
+    const pollDeepRead = () => {
+        let attempts = 0;
+        const poll = setInterval(async () => {
+            attempts++;
+            try {
+                const res = await axios.get(`${API_URL}/papers/${id}/reading`);
+                setDeepState(res.data.status);
+                if (res.data.status === 'DONE' || res.data.status === 'ERROR' || attempts >= 60) {
+                    clearInterval(poll);
+                    if (res.data.status === 'DONE') {
+                        const p = await axios.get(`${API_URL}/papers/${id}`);
+                        setPaper(p.data);
+                    }
+                }
+            } catch {
+                clearInterval(poll);
+            }
+        }, 5000);
+    };
+
+    const handleDeepRead = async () => {
+        if (deepState === 'DONE') {
+            window.open(`/read/${id}`, '_blank');
+            return;
+        }
+        if (['STARTING', 'PENDING', 'RUNNING'].includes(deepState)) return;
+        setDeepState('STARTING');
+        try {
+            const res = await axios.post(`${API_URL}/papers/${id}/deep-read`);
+            setDeepState(res.data.status === 'STARTED' ? 'PENDING' : res.data.status);
+            if (res.data.status !== 'DONE') pollDeepRead();
+        } catch (err) {
+            console.error(err);
+            alert(err.response?.data?.detail || 'Failed to start the deep read');
+            setDeepState('ERROR');
+        }
+    };
+
+    useEffect(() => {
+        if (!id) return;
+        axios.get(`${API_URL}/papers/${id}/reading`).then(res => {
+            setDeepState(res.data.status);
+            if (res.data.status === 'PENDING' || res.data.status === 'RUNNING') pollDeepRead();
+        }).catch(() => {});
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [id]);
 
     // Adds the paper to the BibTeX library (venue auto-detected) and copies the entry
     const handleCopyBibtex = async () => {
@@ -63,34 +122,6 @@ const PaperDetail = () => {
             document.title = 'Paper Agent';
         };
     }, [id]);
-
-    const handleRefresh = async () => {
-        if (refreshing) return;
-        setRefreshing(true);
-        try {
-            await axios.post(`${API_URL}/papers/${id}/resummarize`);
-            // Poll for completion (check every 3s, up to 120s)
-            let attempts = 0;
-            const poll = setInterval(async () => {
-                attempts++;
-                try {
-                    const res = await axios.get(`${API_URL}/papers/${id}`);
-                    if (res.data.summary_personalized !== paper?.summary_personalized || attempts >= 40) {
-                        clearInterval(poll);
-                        setPaper(res.data);
-                        setRefreshing(false);
-                    }
-                } catch {
-                    clearInterval(poll);
-                    setRefreshing(false);
-                }
-            }, 3000);
-        } catch (error) {
-            console.error('Failed to re-summarize', error);
-            alert(error.response?.data?.detail || 'Failed to trigger re-summarization');
-            setRefreshing(false);
-        }
-    };
 
     if (loading) {
         return (
@@ -172,7 +203,7 @@ const PaperDetail = () => {
                                     className={`shrink-0 flex items-center gap-2 px-3 py-1.5 rounded-lg text-lg font-bold ${paper.score >= 85 ? 'bg-green-500/20 text-green-400' : 'bg-yellow-500/20 text-yellow-400'}`}
                                     title={paper.user_score !== null && paper.user_score !== undefined
                                         ? 'User-assigned score'
-                                        : `${paper.score_stage1 !== null && paper.score_stage1 !== undefined ? `Stage 1: ${paper.score_stage1} → ` : ''}final ${paper.score}${paper.score_model ? ` (${paper.score_model})` : ''}`}
+                                        : `${paper.score_stage1 !== null && paper.score_stage1 !== undefined ? `Screen ${paper.score_stage1 / 20}/5 → ` : ''}final ${paper.score}${paper.score_model ? ` (${paper.score_model})` : ''}`}
                                 >
                                     <Star size={18} fill="currentColor" />
                                     {paper.score}
@@ -207,6 +238,18 @@ const PaperDetail = () => {
                                     : bibState === 'copied' ? `Copied${bibJournal ? ` (${bibJournal})` : ''}`
                                     : bibState === 'error' ? 'BibTeX failed'
                                     : 'BibTeX'}
+                            </button>
+                            <button
+                                onClick={handleDeepRead}
+                                disabled={['STARTING', 'PENDING', 'RUNNING'].includes(deepState)}
+                                className="flex items-center gap-2 text-cyan-400 hover:text-cyan-300 hover:underline transition-colors disabled:cursor-wait disabled:text-slate-500"
+                                title={deepState === 'DONE' ? 'Open the bilingual reading page' : 'Deep read with Claude: verdict, summary, paragraph-by-paragraph Chinese notes and translation (~1-2 min)'}
+                            >
+                                <BookOpen size={16} />
+                                {deepState === 'DONE' ? 'Read'
+                                    : ['STARTING', 'PENDING', 'RUNNING'].includes(deepState) ? 'Deep reading…'
+                                    : deepState === 'ERROR' ? 'Deep read failed — retry'
+                                    : 'Deep read'}
                             </button>
                             {paper.main_affiliation && (
                                 <div className="flex items-center gap-2">
@@ -250,20 +293,9 @@ const PaperDetail = () => {
                     <div className="mb-10">
                         <div className="flex items-center justify-between gap-4 mb-4">
                             <h3 className="text-xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-blue-400 font-display">
-                                AI Analysis
+                                TL;DR
                             </h3>
-                            <button
-                                onClick={handleRefresh}
-                                disabled={refreshing}
-                                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-bold transition-all ${refreshing
-                                    ? 'bg-slate-700 text-slate-500 cursor-wait'
-                                    : 'bg-slate-700/50 text-cyan-400 hover:bg-slate-600 border border-slate-600/50'
-                                    }`}
-                                title={paper.summary_personalized ? 'Re-summarize with LLM' : 'Summarize with LLM'}
-                            >
-                                <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
-                                {refreshing ? 'Summarizing...' : (paper.summary_personalized ? 'Re-summarize' : 'Summarize')}
-                            </button>
+
                         </div>
                         <div className="prose prose-invert prose-slate max-w-none bg-slate-900/30 p-6 rounded-xl border border-slate-700/50">
                             {paper.summary_personalized ? (
@@ -290,7 +322,7 @@ const PaperDetail = () => {
                                         pre: ({ children }) => <pre className="bg-slate-900/50 p-4 rounded-lg overflow-x-auto whitespace-pre-wrap break-words border border-slate-700/50 mb-4">{children}</pre>,
                                     }}
                                 >
-                                    {paper.summary_personalized.replace(/^```[a-zA-Z]*\n?/i, '').replace(/\n?```$/i, '').trim()}
+                                    {tldrOnly(paper.summary_personalized)}
                                 </ReactMarkdown>
                             ) : (
                                 <p className="text-slate-500 italic">No personalized summary available.</p>

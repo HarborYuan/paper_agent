@@ -1,0 +1,3 @@
+{% for u in units %}{% if u.kind == 'para' %}[{{ u.id }}] {{ u.text }}
+{% elif u.kind in ('figure', 'table') %}[{{ u.id }}] {{ u.caption }}
+{% endif %}{% endfor %}

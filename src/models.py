@@ -45,6 +45,61 @@ class Paper(SQLModel, table=True):
             return [p.strip('"') for p in parts if p.strip('"')]
 
 
+class Project(SQLModel, table=True):
+    """
+    A research project that collects papers. New papers are recalled for it by embedding similarity
+    (seed papers + description) and by the screen model; the reviewer confirms each match.
+    """
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = Field(index=True, sa_column_kwargs={"unique": True})
+    description: str = ""
+    keywords: Optional[str] = None          # JSON list
+    active: bool = True                     # inactive projects are not used for recall
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
+
+
+class ProjectPaper(SQLModel, table=True):
+    project_id: int = Field(primary_key=True)
+    paper_id: str = Field(primary_key=True)
+    source: str = "auto"                    # seed | manual | auto (recalled + confirmed by the reviewer)
+    reason: Optional[str] = None
+    similarity: Optional[float] = None
+    added_at: datetime = Field(default_factory=datetime.now)
+
+
+class HotSignal(SQLModel, table=True):
+    """Hugging Face Daily Papers popularity of a paper (upvotes / GitHub stars), refreshed nightly."""
+    paper_id: str = Field(primary_key=True)
+    upvotes: int = 0
+    github_stars: int = 0
+    hf_date: Optional[str] = None           # daily-papers date it was listed on
+    ai_summary: Optional[str] = None        # HF's one-line summary (fallback TL;DR)
+    github_repo: Optional[str] = None
+    first_seen: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
+    pushed_at: Optional[datetime] = None    # sent in the Hot section (each paper once)
+
+
+class PaperReading(SQLModel, table=True):
+    """
+    Deep read of one paper (verdict pipeline): the paper split into reading units
+    (paragraphs / equations / figures / tables), the reviewer's per-group Chinese gist and
+    claim flags, and a full Chinese translation of every unit. Rendered at /read/{paper_id}.
+    """
+    paper_id: str = Field(primary_key=True)
+    status: str = "PENDING"                 # PENDING | RUNNING | DONE | ERROR
+    source: Optional[str] = None            # "html" (arXiv LaTeXML units) | "text" (PDF text only, no units)
+    units: Optional[str] = None             # JSON list of units
+    notes: Optional[str] = None             # JSON list of {ids, gist, flags:[{id, span, kind, why, verified}]}
+    translations: Optional[str] = None      # JSON {unit_id: zh}
+    deep: Optional[str] = None              # JSON: final verdict + dimensions + reason
+    model: Optional[str] = None
+    error: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
+
+
 class SchemaVersion(SQLModel, table=True):
     id: int = Field(primary_key=True, default=1)
     version: int
@@ -77,28 +132,6 @@ class LLMUsage(SQLModel, table=True):
     latency_ms: Optional[int] = None
     success: bool = True
     created_at: datetime = Field(default_factory=datetime.now, index=True)
-
-
-class Report(SQLModel, table=True):
-    """
-    LLM-written trend report (daily / weekly / monthly) over the high-scoring papers of a period,
-    plus the computed statistics it was based on. Pushed to Lark right after the daily digest.
-    """
-    id: Optional[int] = Field(default=None, primary_key=True)
-    kind: str = Field(index=True)                 # daily | weekly | monthly
-    period_start: datetime = Field(index=True)    # inclusive
-    period_end: datetime                          # exclusive
-    period_label: str                             # "2026-08-21" / "2026-08-18 – 2026-08-24" / "2026-07"
-    title: str
-    content: str                                  # markdown
-    stats: Optional[str] = None                   # JSON
-    paper_ids: Optional[str] = None               # JSON list of arXiv ids covered
-    paper_count: int = 0
-    model: Optional[str] = None
-    pushed: bool = False
-    pushed_at: Optional[datetime] = None
-    created_at: datetime = Field(default_factory=datetime.now)
-    updated_at: datetime = Field(default_factory=datetime.now)
 
 
 class PaperEmbedding(SQLModel, table=True):

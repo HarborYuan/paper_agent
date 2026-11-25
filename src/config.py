@@ -4,36 +4,48 @@ from typing import List
 class Settings(BaseSettings):
     DATABASE_URL: str = "sqlite:///data/paper_agent.db"
 
-    # ---- LLM provider (OpenRouter by default; any OpenAI-compatible endpoint works) ----
-    # Preferred: OPENROUTER_API_KEY. Legacy OPENAI_API_KEY / OPENAI_BASE_URL are still honored
-    # as a fallback so existing deployments keep working.
+    # ---- OpenRouter: embeddings (always) and the chat models when CHAT_PROVIDER = "openrouter" ----
     OPENROUTER_API_KEY: str | None = None
     OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
-    OPENAI_API_KEY: str | None = None
-    OPENAI_BASE_URL: str | None = "https://api.openai.com/v1"
 
-    # Default models (OpenRouter ids). Editable at runtime from the Settings page, which writes the
-    # new values back to the env file and hot-applies them (see services/settings_service.py).
-    LLM_MODEL_STAGE1: str = "openai/gpt-4o-mini"          # cheap screening on title+abstract
-    LLM_MODEL_STAGE2: str = "anthropic/claude-sonnet-5"    # careful review w/ intro text
-    LLM_MODEL_SUMMARY: str = "openai/gpt-4o-mini"         # full-text summarization
-    STAGE2_THRESHOLD: int = 60        # stage-1 score needed to trigger stage-2 review
-    SCORE_THRESHOLD: int = 85         # final score needed to summarize + notify
-    STAGE2_TEXT_CHAR_LIMIT: int = 20000       # first-pass excerpt shown to the stage-2 reviewer
-    STAGE2_DEEP_TEXT_CHAR_LIMIT: int = 120000  # extended excerpt when the reviewer asks to read on
+    # Claude models (editable from the Settings page, which writes the env file and hot-applies them).
+    LLM_MODEL_STAGE1: str = "claude-haiku-5-5"     # screen: title + abstract -> relevance tier
+    LLM_MODEL_STAGE2: str = "claude-sonnet-5-5"    # review: abstract + first part -> verdict
+    LLM_MODEL_SUMMARY: str = "claude-sonnet-5-5"   # deep read: whole paper -> final verdict, TL;DR, notes
+    SCORE_THRESHOLD: int = 85         # final score that counts as a push (Must Read 92-99, Worth Reading 85-91)
+    STAGE2_TEXT_CHAR_LIMIT: int = 20000       # excerpt shown to the reviewer
+
+    # ---- Pipeline (Claude API direct) ----
+    # screen (relevance tier) -> review (verdict + affiliations) -> deep read (final verdict, TL;DR,
+    # paragraph notes, claim flags) + translation. See services/verdict_pipeline.py.
+    ANTHROPIC_API_KEY: str | None = None
+    CHAT_PROVIDER: str = "anthropic"   # "anthropic" (Claude API, Batch API available) | "openrouter" (real time only)
+    SCREEN_MIN_RELEVANCE: int = 4      # screen relevance needed to go on to review
+    LLM_MODEL_TRANSLATE: str = "claude-haiku-5-5"
+    LLM_USE_BATCH: bool = True         # nightly runs go through the Message Batches API (50% off)
+    BATCH_MAX_WAIT_MINUTES: int = 240  # after this, unfinished batch requests are retried in real time
+    FIGURE_DIR: str | None = None      # PDF crops of broken figures/tables; default: "figures" next to the SQLite DB
+    # Spend guard for the Claude API key (list-price estimate from the llmusage table, batch discount included).
+    CLAUDE_MONTHLY_BUDGET: int = 80      # USD per billing cycle; stages are skipped once it is used up
+    CLAUDE_BUDGET_RESET_DAY: int = 1       # day of month the billing cycle (and the included credits) resets
+    DEEP_READ_MAX_PER_RUN: int = 12        # nightly cap on deep reads (must_read first, then by score)
+    PROJECT_SIM_THRESHOLD: float = 0.74    # cosine (voyage-4) for a new paper to be a project candidate
+    PUBLIC_BASE_URL: str | None = None     # e.g. http://nas:8000 — links in Lark messages to /read and /picks
+    # Hot lane: popular papers (Hugging Face Daily Papers) pushed in their own section, relevant or not
+    HOT_ENABLED: bool = True
+    HOT_LOOKBACK_DAYS: int = 7
+    HOT_MIN_UPVOTES: int = 50
+    HOT_MIN_STARS: int = 500
+    HOT_MAX_PER_RUN: int = 5
+    HOT_WEB_SEARCH: bool = False           # one Claude web_search call per run (~$0.2): what people say about them
 
     # Embeddings (semantic search / related papers / topic clustering). Served through the same
     # OpenAI-compatible /embeddings endpoint (OpenRouter lists them under /embeddings/models).
     EMBEDDING_MODEL: str = "voyageai/voyage-4"
     EMBEDDING_DIM: int = 512          # 0 = model's native size; Matryoshka models accept 256/512/1024
     EMBEDDING_BATCH_SIZE: int = 64
+    EMBED_CATCHUP_PER_RUN: int = 5000     # nightly: embed up to this many papers still missing a vector
 
-    # Reports (LLM-written trend summaries over the selected papers; pushed after the daily digest)
-    LLM_MODEL_REPORT: str = "anthropic/claude-sonnet-5"
-    REPORT_DAILY_ENABLED: bool = True      # one per run, covering the papers pushed in that run
-    REPORT_WEEKLY_ENABLED: bool = True     # on REPORT_WEEKLY_DAY, covering the previous 7 days
-    REPORT_MONTHLY_ENABLED: bool = True    # on the 1st, covering the previous calendar month
-    REPORT_WEEKLY_DAY: int = 0             # 0 = Monday … 6 = Sunday (UTC)
 
     # Notification (Lark / 飞书)
     LARK_WEBHOOK_URL: str | None = None
@@ -63,16 +75,35 @@ class Settings(BaseSettings):
     # ---- Derived helpers ----
     @property
     def llm_api_key(self) -> str | None:
-        return self.OPENROUTER_API_KEY or self.OPENAI_API_KEY
+        """Key for the OpenAI-compatible endpoints (embeddings, model catalog): OpenRouter."""
+        return self.OPENROUTER_API_KEY
 
     @property
     def llm_base_url(self) -> str:
-        if self.OPENROUTER_API_KEY:
-            return self.OPENROUTER_BASE_URL
-        return self.OPENAI_BASE_URL or self.OPENROUTER_BASE_URL
+        return self.OPENROUTER_BASE_URL
+
+    @property
+    def chat_api_key(self) -> str | None:
+        """Key for the chat models of the selected CHAT_PROVIDER."""
+        return self.OPENROUTER_API_KEY if self.CHAT_PROVIDER == "openrouter" else self.ANTHROPIC_API_KEY
+
+    @property
+    def chat_key_name(self) -> str:
+        return "OPENROUTER_API_KEY" if self.CHAT_PROVIDER == "openrouter" else "ANTHROPIC_API_KEY"
+
+    @property
+    def figure_dir(self) -> str:
+        """FIGURE_DIR, else a "figures" folder beside the SQLite file (so Docker keeps it under /config)."""
+        if self.FIGURE_DIR:
+            return self.FIGURE_DIR
+        import os
+        url = self.DATABASE_URL
+        if url.startswith("sqlite:///"):
+            return os.path.join(os.path.dirname(url[len("sqlite:///"):]) or ".", "figures")
+        return "data/figures"
 
     @property
     def llm_provider(self) -> str:
-        return "openrouter" if self.OPENROUTER_API_KEY or "openrouter.ai" in (self.llm_base_url or "") else "openai-compatible"
+        return "openrouter"
 
 settings = Settings()

@@ -1,6 +1,6 @@
 """
 Embeddings: vector (de)serialisation, index search / neighbours, clustering, embed_papers with a
-mocked provider, missing/backfill bookkeeping, report-cluster plumbing, and the HTTP endpoints.
+mocked provider, missing/backfill bookkeeping, and the HTTP endpoints.
 """
 import json
 import asyncio
@@ -132,21 +132,6 @@ def test_embed_texts_records_usage_and_retries_without_dims(edb):
     with Session(edb) as s:
         rows = s.exec(select(LLMUsage).where(LLMUsage.task == "embed")).all()
         assert len(rows) == 1 and rows[0].prompt_tokens == 12 and rows[0].cost == pytest.approx(0.000001) and rows[0].success
-
-
-def test_report_prompt_includes_clusters(edb):
-    from src.services import report_service as rs
-    from datetime import date
-    with patch("src.services.report_service.engine", edb), \
-         patch.object(es, "embed_texts", AsyncMock(side_effect=_fake_embed_texts)):
-        asyncio.run(es.backfill())
-        start, end, label = rs.period_for("weekly", date(2026, 8, 25))
-        with Session(edb) as s:
-            stats, papers = rs.compute_stats(s, "weekly", start, end)
-        assert stats["clusters"] and sum(len(c) for c in stats["clusters"]) == 5
-        prompt = rs.build_prompt("weekly", label, stats, papers)
-        assert "PRE-COMPUTED TOPIC CLUSTERS" in prompt and "[p1] Video tokenizer" in prompt
-        assert '"clusters"' not in prompt   # raw id lists are not duplicated into the stats JSON
 
 
 def test_retrieval_endpoints(client, session):

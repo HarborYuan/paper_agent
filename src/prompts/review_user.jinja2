@@ -1,0 +1,16 @@
+Title: {{ paper.title }}
+Authors: {{ authors_str }}
+Category: {{ paper.category_primary }} ({{ paper.all_categories }})
+Abstract: {{ paper.summary_generic }}
+
+{% if text_snippet %}
+{% if truncated %}PAPER BODY (first ~{{ visible_pct }}% of the extracted text; it stops before the end):{% else %}PAPER BODY (full extracted text):{% endif %}
+<<<
+{{ text_snippet }}
+>>>
+{% else %}
+PAPER BODY: not available. Judge from the abstract only and add the flag "no_full_text".
+{% endif %}
+{% if candidate_projects %}
+CANDIDATE PROJECTS: {{ candidate_projects | join(", ") }}
+{% endif %}

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
-import { FileText, Calendar, Users, Tag, ExternalLink, Star, Building2, RefreshCw, Check, X, Edit2 } from 'lucide-react';
+import { FileText, Calendar, Users, Tag, ExternalLink, Star, Building2, BookOpen, Check, X, Edit2 } from 'lucide-react';
 import { format } from 'date-fns';
 import { Link } from 'react-router-dom';
 
@@ -44,7 +44,6 @@ const MATCH_KEYS = Object.keys(LOGO_MAP)
 
 const PaperCard = ({ paper, onRefreshed, similarity }) => {
 
-    const [refreshing, setRefreshing] = useState(false);
     const {
         title,
         authors, // Changed from authors_list
@@ -153,36 +152,6 @@ const PaperCard = ({ paper, onRefreshed, similarity }) => {
         }
     }
 
-    const handleRefresh = async (e) => {
-        e.stopPropagation();
-        if (refreshing) return;
-        setRefreshing(true);
-        try {
-            await axios.post(`${API_URL}/papers/${paper.id}/resummarize`);
-            // Poll for completion (check every 3s, up to 120s)
-            let attempts = 0;
-            const poll = setInterval(async () => {
-                attempts++;
-                try {
-                    const res = await axios.get(`${API_URL}/papers/${paper.id}`);
-                    if (res.data.summary_personalized !== paper.summary_personalized || attempts >= 40) {
-                        clearInterval(poll);
-                        setRefreshing(false);
-                        if (onRefreshed) onRefreshed(paper.id);
-                        // Force reload the page to show updated data
-                        window.location.reload();
-                    }
-                } catch {
-                    clearInterval(poll);
-                    setRefreshing(false);
-                }
-            }, 3000);
-        } catch (error) {
-            console.error('Failed to re-summarize', error);
-            alert(error.response?.data?.detail || 'Failed to trigger re-summarization');
-            setRefreshing(false);
-        }
-    };
 
     return (
         <motion.div
@@ -230,7 +199,7 @@ const PaperCard = ({ paper, onRefreshed, similarity }) => {
                                 <div
                                     onClick={handleScoreClick}
                                     className={`group/score flex items-center gap-1 px-2 py-0.5 rounded text-xs font-bold cursor-pointer transition-colors ${localScore >= 85 ? 'bg-green-500/20 text-green-400 hover:bg-green-500/30' : 'bg-yellow-500/20 text-yellow-400 hover:bg-yellow-500/30'}`}
-                                    title={`${user_score !== null && user_score !== undefined ? 'User score' : `${score_stage1 !== null && score_stage1 !== undefined ? `Stage 1: ${score_stage1} → ` : ''}final ${score}${score_model ? ` (${score_model})` : ''}`} · click to edit`}
+                                    title={`${user_score !== null && user_score !== undefined ? 'User score' : `${score_stage1 !== null && score_stage1 !== undefined ? `Screen ${score_stage1 / 20}/5 → ` : ''}final ${score}${score_model ? ` (${score_model})` : ''}`} · click to edit`}
                                 >
                                     <Star size={12} fill="currentColor" />
                                     {localScore}
@@ -247,14 +216,16 @@ const PaperCard = ({ paper, onRefreshed, similarity }) => {
                             )
                         )}
                     </div>
-                    <button
-                        onClick={handleRefresh}
-                        disabled={refreshing}
-                        className="shrink-0 p-1 rounded-full text-slate-500 hover:text-cyan-400 hover:bg-slate-700/50 transition-all disabled:cursor-wait"
-                        title={summary_personalized ? 'Re-summarize with LLM' : 'Summarize with LLM'}
+                    <a
+                        href={`/read/${paper.id}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className="shrink-0 p-1 rounded-full text-slate-500 hover:text-cyan-400 hover:bg-slate-700/50 transition-all"
+                        title="Reading page"
                     >
-                        <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
-                    </button>
+                        <BookOpen size={14} />
+                    </a>
                 </div>
 
                 {/* Meta */}

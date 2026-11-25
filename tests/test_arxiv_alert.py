@@ -130,13 +130,17 @@ def _engine_with(status=None):
 
 
 def _patch(monkeypatch, engine, notifier):
-    async def _reports(*a, **kw):
-        return []
     monkeypatch.setattr(worker, "engine", engine)
     monkeypatch.setattr(worker, "ArxivFetcher", _FailingFetcher)
-    monkeypatch.setattr(worker, "run_scheduled_reports", _reports)
     monkeypatch.setattr(worker, "get_notifier", lambda: notifier)
     monkeypatch.setattr(notifier_mod, "get_notifier", lambda: notifier)
+    monkeypatch.setattr(worker.settings, "HOT_ENABLED", False)
+
+    async def _no_embed(*a, **kw):
+        return 0
+    monkeypatch.setattr(worker, "embed_new_papers", _no_embed)
+    monkeypatch.setattr(worker.settings, "ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr("src.database.engine", engine)
 
 
 def test_outage_alerts_lark_instead_of_rest_day(monkeypatch):
@@ -154,16 +158,12 @@ def test_outage_still_processes_pending_papers(monkeypatch):
     _patch(monkeypatch, _engine_with("NEW"), n)
     scored = []
 
-    async def _score(sem, llm, paper):
-        scored.append(paper.id)
+    async def _score(papers, log=None):
+        scored.extend(p.id for p in papers)
+        return {"reviewed": 0, "deep_read": 0}
 
-    class _LLM:
-        class config:
-            score_threshold, stage2_threshold = 85, 60
-            stage1_model = stage2_model = summary_model = "stub"
 
-    monkeypatch.setattr(worker, "process_paper_score", _score)
-    monkeypatch.setattr(worker, "LLMService", _LLM)
+    monkeypatch.setattr(worker, "score_papers", _score)
     asyncio.run(worker.run_worker())
     assert scored == ["2501.00001"]
     assert "arXiv API" in (n.sent[0][0] or "")

@@ -101,7 +101,7 @@ def test_describe_masks_secrets(env_file):
 
 def test_update_settings_validates_and_hot_applies(env_file):
     from src.config import settings as app_settings
-    for bad in ({"STAGE2_THRESHOLD": 500}, {"AUTO_UPDATE_TIME": "25:99"}, {"SUMMARY_LANGUAGE": "FR"},
+    for bad in ({"DEEP_READ_MAX_PER_RUN": 500}, {"AUTO_UPDATE_TIME": "25:99"}, {"SUMMARY_LANGUAGE": "FR"},
                 {"DATABASE_URL": "sqlite:///x.db"}, {"NOPE": 1}):
         with pytest.raises(ValueError):
             update_settings(bad)
@@ -135,12 +135,12 @@ def test_update_settings_validates_and_hot_applies(env_file):
 
 
 def test_env_var_override_warning(env_file, monkeypatch):
-    monkeypatch.setenv("SCORE_THRESHOLD", "90")
-    applied, warnings = update_settings({"SCORE_THRESHOLD": 80})
-    assert applied["SCORE_THRESHOLD"] == "80"
-    assert warnings and "SCORE_THRESHOLD" in warnings[0]
-    f = next(x for x in describe_settings()["fields"] if x["key"] == "SCORE_THRESHOLD")
-    assert f["source"] == "env" and f["env_var"] == "SCORE_THRESHOLD"
+    monkeypatch.setenv("DEEP_READ_MAX_PER_RUN", "9")
+    applied, warnings = update_settings({"DEEP_READ_MAX_PER_RUN": 8})
+    assert applied["DEEP_READ_MAX_PER_RUN"] == "8"
+    assert warnings and "DEEP_READ_MAX_PER_RUN" in warnings[0]
+    f = next(x for x in describe_settings()["fields"] if x["key"] == "DEEP_READ_MAX_PER_RUN")
+    assert f["source"] == "env" and f["env_var"] == "DEEP_READ_MAX_PER_RUN"
 
 
 def test_settings_endpoints(client, env_file):
@@ -151,16 +151,16 @@ def test_settings_endpoints(client, env_file):
     assert "sk-or-test-secret-1234" not in r.text
     assert "scheduler" in data
 
-    r = client.put("/api/settings", json={"values": {"SCORE_THRESHOLD": 88, "LARK_WEBHOOK_URL": "https://hook.example/abc"}})
+    r = client.put("/api/settings", json={"values": {"DEEP_READ_MAX_PER_RUN": 9, "LARK_WEBHOOK_URL": "https://hook.example/abc"}})
     assert r.status_code == 200, r.text
     data = r.json()
-    assert data["applied"]["SCORE_THRESHOLD"] == "88"
+    assert data["applied"]["DEEP_READ_MAX_PER_RUN"] == "9"
     assert data["applied"]["LARK_WEBHOOK_URL"] == "(updated)"
     assert "hook.example" not in json.dumps(data["fields"])
     lark = next(f for f in data["fields"] if f["key"] == "LARK_WEBHOOK_URL")
     assert lark["configured"] is True
 
-    assert client.put("/api/settings", json={"values": {"SCORE_THRESHOLD": 101}}).status_code == 400
+    assert client.put("/api/settings", json={"values": {"DEEP_READ_MAX_PER_RUN": 500}}).status_code == 400
 
     r = client.put("/api/settings/profile", json={"profile": "## New profile\n- x"})
     assert r.status_code == 200 and r.json()["profile"] == "## New profile\n- x"

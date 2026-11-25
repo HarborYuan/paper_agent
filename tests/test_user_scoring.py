@@ -10,7 +10,6 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.main import app, get_session
 from src.models import Paper
-from src.worker import process_paper_score
 from unittest.mock import AsyncMock, MagicMock
 
 # In-memory DB for testing
@@ -72,34 +71,15 @@ def test_user_score_endpoint(client, session):
     assert response.status_code == 400
 
 @pytest.mark.asyncio
-async def test_worker_skips_scoring_if_user_score_present(session):
-    # Setup paper with user score
-    paper = Paper(
-        id="test.456",
-        title="Test Paper 2",
-        authors="[]",
-        summary_generic="Summary",
-        published_at="2023-01-01T00:00:00",
-        category_primary="cs.AI",
-        all_categories="[]",
-        pdf_url="http://example.com",
-        status="NEW",
-        user_score=88
-    )
-    
-    # Mock services
-    sem = AsyncMock()
-    llm = AsyncMock()
-    llm.score_paper.return_value = MagicMock(score=50) # AI would give 50
+async def test_pipeline_skips_user_scored_papers():
+    """User-scored papers are never sent to the model (no request is built for them)."""
+    from src.services import verdict_pipeline
 
-    # Run worker function
-    # Note: process_paper_score doesn't take session but uses engine directly. 
-    # This makes it hard to test with in-memory DB unless we mock the engine/session context manager in worker.py
-    # or validation logic.
-    # However, we can check the logic:
-    # "if paper.user_score is not None: return"
-    
-    # Let's trust the logic inspection for worker skip, 
-    # or we can refactor worker to accept session, but that changes signature.
-    # For now, let's stick to API test which confirms persistence.
-    pass
+    class _Runner:
+        async def run(self, reqs, log=None, batch=None):
+            raise AssertionError("no requests expected for user-scored papers")
+
+    paper = Paper(id="test.456", title="T", authors="[]", summary_generic="S", published_at="2023-01-01T00:00:00",
+                  category_primary="cs.AI", all_categories="[]", pdf_url="http://example.com", status="NEW", user_score=88)
+    stats = await verdict_pipeline.run_pipeline([paper], _Runner())
+    assert stats["screened"] == 0

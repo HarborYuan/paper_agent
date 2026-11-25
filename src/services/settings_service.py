@@ -19,9 +19,8 @@ TASK_STAGE1 = "score_stage1"
 TASK_STAGE2 = "score_stage2"
 TASK_SUMMARY = "summarize"
 TASK_AFFILIATION = "affiliation"
-TASK_REPORT = "report"
 TASK_EMBED = "embed"
-ALL_TASKS = [TASK_STAGE1, TASK_STAGE2, TASK_SUMMARY, TASK_AFFILIATION, TASK_REPORT, TASK_EMBED]
+ALL_TASKS = [TASK_STAGE1, TASK_STAGE2, TASK_SUMMARY, TASK_AFFILIATION, TASK_EMBED]
 
 
 # ---------------------------------------------------------------------------
@@ -48,34 +47,43 @@ class Field:
 SCHEMA: List[Field] = [
     # Provider
     Field("OPENROUTER_API_KEY", "provider", "secret", "OpenRouter API key",
-          "Preferred provider. If set, requests go to OPENROUTER_BASE_URL."),
+          "Used for embeddings (semantic search, related papers, project recall)."),
     Field("OPENROUTER_BASE_URL", "provider", "str", "OpenRouter base URL", "OpenAI-compatible endpoint.",
           pattern=r"^https?://.+"),
-    Field("OPENAI_API_KEY", "provider", "secret", "OpenAI API key (legacy fallback)",
-          "Used only when OPENROUTER_API_KEY is empty."),
-    Field("OPENAI_BASE_URL", "provider", "str", "OpenAI base URL (legacy fallback)", "", pattern=r"^https?://.+"),
+    Field("CHAT_PROVIDER", "provider", "enum", "Chat models via",
+          "anthropic: Claude API (Batch API, subscription credits). openrouter: OpenRouter key, real time only.",
+          options=["anthropic", "openrouter"]),
+    Field("ANTHROPIC_API_KEY", "provider", "secret", "Anthropic API key",
+          "Claude API key from the Claude Console. Model ids starting with claude- (e.g. claude-haiku-5-5) go to the Anthropic API."),
+    # Verdict pipeline
+    Field("SCREEN_MIN_RELEVANCE", "pipeline", "int", "Screen: minimum relevance for review", "", min=0, max=5),
+    Field("LLM_MODEL_TRANSLATE", "models", "str", "Translation model", "", owner="models"),
+    Field("LLM_USE_BATCH", "pipeline", "bool", "Use the Batch API for nightly runs", "50% cheaper; results usually within an hour."),
+    Field("CLAUDE_MONTHLY_BUDGET", "pipeline", "int", "Claude budget per billing cycle (USD)",
+          "Estimated spend cap; stages are skipped or trimmed once it is reached.", min=0, max=10000),
+    Field("CLAUDE_BUDGET_RESET_DAY", "pipeline", "int", "Claude billing cycle reset day", "Day of month the included API credits refresh.", min=1, max=28),
+    Field("DEEP_READ_MAX_PER_RUN", "pipeline", "int", "Max deep reads per run", "must_read first, then by score; the rest wait for the next run.", min=0, max=200),
+    Field("PUBLIC_BASE_URL", "notification", "str", "Public base URL of this app",
+          "Used for reading-page links in Lark messages, e.g. http://nas:8000. Empty = no links.", pattern=r"^(https?://.+)?$"),
+    Field("PROJECT_SIM_THRESHOLD", "pipeline", "str", "Project recall: cosine threshold", "Embedding similarity for a new paper to become a project candidate (voyage-4 scale, ~0.74).", pattern=r"^0?\.\d+$"),
+    Field("HOT_ENABLED", "pipeline", "bool", "Hot lane", "Push popular papers (Hugging Face Daily Papers) in their own section."),
+    Field("HOT_MIN_UPVOTES", "pipeline", "int", "Hot: minimum HF upvotes", "", min=1, max=10000),
+    Field("HOT_MIN_STARS", "pipeline", "int", "Hot: or minimum GitHub stars", "", min=1, max=1000000),
+    Field("HOT_MAX_PER_RUN", "pipeline", "int", "Hot: papers per run", "", min=0, max=50),
+    Field("HOT_LOOKBACK_DAYS", "pipeline", "int", "Hot: lookback days", "", min=1, max=30),
+    Field("HOT_WEB_SEARCH", "pipeline", "bool", "Hot: web search for discussion", "One Claude web_search call per run (~$0.2). Brand-new papers often have little discussion yet."),
+    Field("BATCH_MAX_WAIT_MINUTES", "pipeline", "int", "Batch: max wait before real-time retry (minutes)", "", min=5, max=1440),
     # Models / thresholds (owned by the Models card)
-    Field("LLM_MODEL_STAGE1", "models", "str", "Stage 1 model", "", owner="models"),
-    Field("LLM_MODEL_STAGE2", "models", "str", "Stage 2 model", "", owner="models"),
-    Field("LLM_MODEL_SUMMARY", "models", "str", "Summary model", "", owner="models"),
-    Field("STAGE2_THRESHOLD", "models", "int", "Stage-2 threshold", "", min=0, max=100, owner="models"),
-    Field("SCORE_THRESHOLD", "models", "int", "Score threshold", "", min=0, max=100, owner="models"),
-    Field("STAGE2_TEXT_CHAR_LIMIT", "pipeline", "int", "Stage-2 first-pass text (chars)",
-          "How much of the paper the stage-2 reviewer sees on the first pass.", min=1000, max=300000),
-    Field("STAGE2_DEEP_TEXT_CHAR_LIMIT", "pipeline", "int", "Stage-2 extended text (chars)",
-          "Text limit for the second pass, when the reviewer decides the paper is relevant enough "
-          "that the verdict hinges on evidence beyond the first pass.", min=10000, max=300000),
+    Field("LLM_MODEL_STAGE1", "models", "str", "Screen model", "", owner="models"),
+    Field("LLM_MODEL_STAGE2", "models", "str", "Review model", "", owner="models"),
+    Field("LLM_MODEL_SUMMARY", "models", "str", "Deep-read model", "", owner="models"),
+    Field("STAGE2_TEXT_CHAR_LIMIT", "pipeline", "int", "Review excerpt (chars)",
+          "How much of the paper the reviewer sees.", min=1000, max=300000),
     # Retrieval
     Field("EMBEDDING_MODEL", "retrieval", "str", "Embedding model",
           "Used for semantic search, related papers and topic clustering. Changing it makes existing vectors stale — run Backfill afterwards."),
     Field("EMBEDDING_DIM", "retrieval", "int", "Embedding dimensions",
           "0 = model native size. Matryoshka models (voyage-4, text-embedding-3-*) accept 256 / 512 / 1024.", min=0, max=4096),
-    # Reports
-    Field("LLM_MODEL_REPORT", "models", "str", "Report model", "", owner="models"),
-    Field("REPORT_DAILY_ENABLED", "reports", "bool", "Daily report", "After each run: a short trend note on the papers pushed in that run (sent with the digest)."),
-    Field("REPORT_WEEKLY_ENABLED", "reports", "bool", "Weekly report", "Covers the previous 7 days; generated on the weekday below."),
-    Field("REPORT_MONTHLY_ENABLED", "reports", "bool", "Monthly report", "Covers the previous calendar month; generated on the 1st."),
-    Field("REPORT_WEEKLY_DAY", "reports", "int", "Weekly report day (0 = Monday … 6 = Sunday, UTC)", "", min=0, max=6),
     # Pipeline
     Field("ARXIV_CATEGORIES", "pipeline", "list", "arXiv categories", "Comma-separated, e.g. cs.CV, cs.CL, cs.AI."),
     Field("SUMMARY_LANGUAGE", "pipeline", "enum", "Summary language", "", options=["EN", "CN"]),
@@ -200,9 +208,8 @@ def describe_settings() -> Dict[str, Any]:
         "env_file": {"path": str(path), "exists": path.is_file(), "writable": envf.is_writable(path)},
         "fields": fields,
         "provider": {
-            "name": settings.llm_provider,
-            "base_url": settings.llm_base_url,
-            "key_configured": bool(settings.llm_api_key),
+            "chat": settings.CHAT_PROVIDER, "chat_key_configured": bool(settings.chat_api_key),
+            "embeddings": settings.llm_provider, "embeddings_key_configured": bool(settings.llm_api_key),
         },
     }
 
@@ -246,65 +253,59 @@ def update_settings(values: Dict[str, Any]) -> Tuple[Dict[str, str], List[str]]:
 
 
 # ---------------------------------------------------------------------------
-# LLM config convenience (used by worker / llm service / estimate)
+# LLM config convenience (used by the verdict pipeline)
 # ---------------------------------------------------------------------------
 @dataclass
 class LLMConfig:
-    stage1_model: str
-    stage2_model: str
-    summary_model: str
-    stage2_threshold: int
-    score_threshold: int
-    report_model: str = "anthropic/claude-sonnet-5"
-
-    def model_for_task(self, task: str) -> str:
-        if task == TASK_STAGE2:
-            return self.stage2_model
-        if task == TASK_SUMMARY:
-            return self.summary_model
-        if task == TASK_REPORT:
-            return self.report_model
-        if task == TASK_EMBED:
-            return settings.EMBEDDING_MODEL
-        # stage-1 screening and affiliation extraction both use the cheap model
-        return self.stage1_model
+    stage1_model: str          # screen
+    stage2_model: str          # review
+    summary_model: str         # deep read
+    score_threshold: int       # final score that counts as "push" (verdict bands put Worth Reading at 85+)
+    translate_model: str = "claude-haiku-5-5"
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 
 
+def _claude(value: Optional[str], key: str) -> str:
+    """Model ids from the old OpenRouter setup (e.g. deepseek/..., anthropic/claude-...) fall back to the default."""
+    v = (value or "").strip()
+    return v if v.startswith("claude-") else Settings.model_fields[key].default
+
+
 def get_llm_config() -> LLMConfig:
     return LLMConfig(
-        stage1_model=settings.LLM_MODEL_STAGE1,
-        stage2_model=settings.LLM_MODEL_STAGE2,
-        summary_model=settings.LLM_MODEL_SUMMARY,
-        stage2_threshold=int(settings.STAGE2_THRESHOLD),
+        stage1_model=_claude(settings.LLM_MODEL_STAGE1, "LLM_MODEL_STAGE1"),
+        stage2_model=_claude(settings.LLM_MODEL_STAGE2, "LLM_MODEL_STAGE2"),
+        summary_model=_claude(settings.LLM_MODEL_SUMMARY, "LLM_MODEL_SUMMARY"),
         score_threshold=int(settings.SCORE_THRESHOLD),
-        report_model=settings.LLM_MODEL_REPORT,
+        translate_model=_claude(settings.LLM_MODEL_TRANSLATE, "LLM_MODEL_TRANSLATE"),
     )
+
+
+def stale_model_warnings() -> List[str]:
+    """Settings still holding non-Claude ids (they are ignored and the default is used)."""
+    out = []
+    for key in ("LLM_MODEL_STAGE1", "LLM_MODEL_STAGE2", "LLM_MODEL_SUMMARY", "LLM_MODEL_TRANSLATE"):
+        v = (getattr(settings, key) or "").strip()
+        if v and not v.startswith("claude-"):
+            out.append(f"{key}={v} is not a Claude model; using {Settings.model_fields[key].default} instead.")
+    return out
 
 
 def update_llm_config(
     stage1_model: Optional[str] = None,
     stage2_model: Optional[str] = None,
     summary_model: Optional[str] = None,
-    stage2_threshold: Optional[int] = None,
-    score_threshold: Optional[int] = None,
-    report_model: Optional[str] = None,
+    translate_model: Optional[str] = None,
 ) -> Tuple[LLMConfig, List[str]]:
     values: Dict[str, Any] = {}
-    if stage1_model:
-        values["LLM_MODEL_STAGE1"] = stage1_model
-    if report_model:
-        values["LLM_MODEL_REPORT"] = report_model
-    if stage2_model:
-        values["LLM_MODEL_STAGE2"] = stage2_model
-    if summary_model:
-        values["LLM_MODEL_SUMMARY"] = summary_model
-    if stage2_threshold is not None:
-        values["STAGE2_THRESHOLD"] = stage2_threshold
-    if score_threshold is not None:
-        values["SCORE_THRESHOLD"] = score_threshold
+    for key, v in (("LLM_MODEL_STAGE1", stage1_model), ("LLM_MODEL_STAGE2", stage2_model),
+                   ("LLM_MODEL_SUMMARY", summary_model), ("LLM_MODEL_TRANSLATE", translate_model)):
+        if v:
+            if not v.strip().startswith("claude-"):
+                raise ValueError(f"{key} must be a Claude model id (claude-...), got {v}")
+            values[key] = v.strip()
     _, warnings = update_settings(values)
     return get_llm_config(), warnings
 
@@ -314,7 +315,5 @@ def llm_defaults() -> Dict[str, Any]:
         "stage1": Settings.model_fields["LLM_MODEL_STAGE1"].default,
         "stage2": Settings.model_fields["LLM_MODEL_STAGE2"].default,
         "summary": Settings.model_fields["LLM_MODEL_SUMMARY"].default,
-        "report": Settings.model_fields["LLM_MODEL_REPORT"].default,
-        "stage2_threshold": Settings.model_fields["STAGE2_THRESHOLD"].default,
-        "score_threshold": Settings.model_fields["SCORE_THRESHOLD"].default,
+        "translate": Settings.model_fields["LLM_MODEL_TRANSLATE"].default,
     }

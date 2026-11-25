@@ -1,7 +1,7 @@
 [project]
 name = "paper-agent"
-version = "1.3.0"
-description = "Bib Update"
+version = "2.0.0"
+description = "Pipeline Update"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
@@ -18,6 +18,10 @@ dependencies = [
     "websockets>=16.0",
     "apscheduler>=3.10.4",
     "numpy>=2.5.2",
+    "anthropic>=2.14.0",
+    "beautifulsoup4>=4.15.0",
+    "pymupdf>=1.28.2,<2",
+    "pillow>=13.0.0",
 ]
 
 [dependency-groups]

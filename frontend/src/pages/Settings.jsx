@@ -1,115 +1,23 @@
-import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import axios from 'axios';
-import { Settings as SettingsIcon, ArrowLeft, Cpu, DollarSign, Activity, Save, RefreshCw, Star, Search, Check, AlertTriangle, Info, FileCog, KeyRound, Clock, Bell, Database, User, Eye, EyeOff } from 'lucide-react';
+import { Settings as SettingsIcon, ArrowLeft, Activity, Save, RefreshCw, Search, AlertTriangle, FileCog, KeyRound, Clock, Database, User, Eye, EyeOff, Wallet, Flame, ChevronDown, FolderKanban, Send, Layers } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 const API_URL = '/api'; // All backend endpoints live under /api (same origin)
 
 const TASK_META = {
-    score_stage1: { label: 'Stage 1 · Screening', hint: 'Every new paper, title + abstract. Cheap & recall-oriented.' },
-    score_stage2: { label: 'Stage 2 · Review', hint: 'Papers above the stage-2 threshold: abstract + start of the PDF, judges relevance and quality. Final score.' },
-    summarize: { label: 'Summary', hint: 'Papers above the score threshold: full-text structured summary.' },
-    affiliation: { label: 'Affiliation', hint: 'Header parsing for summarized papers (uses the Stage 1 model).' },
-    report: { label: 'Reports', hint: 'Daily / weekly / monthly trend reports written from the selected papers + computed stats (≈1.2 calls/day).' },
-    embed: { label: 'Embeddings', hint: 'Title+abstract vectors for semantic search, related papers and report clustering (batches of 64 + search queries).' },
+    score_stage1: { label: '① Screen' },
+    score_stage2: { label: '② Review' },
+    summarize: { label: '③ Deep read' },
+    translate: { label: 'Translation' },
+    report: { label: 'Reports (removed)' },
+    hot_chatter: { label: 'Hot · web search' },
+    embed: { label: 'Embeddings' },
+    affiliation: { label: 'Affiliation (legacy)' },
 };
 
 const fmtUSD = (v, digits = 4) => (v === null || v === undefined || Number.isNaN(v)) ? '—' : `$${Number(v).toFixed(digits)}`;
-const fmtPrice = (v) => (v === null || v === undefined) ? '—' : `$${Number(v).toFixed(2)}`;
 const fmtNum = (v) => (v === null || v === undefined) ? '—' : Number(v).toLocaleString();
-
-/* ------------------------------------------------------------------ */
-/* Searchable model picker                                             */
-/* ------------------------------------------------------------------ */
-function ModelSelect({ label, hint, value, onChange, models, disabled }) {
-    const [open, setOpen] = useState(false);
-    const [query, setQuery] = useState('');
-    const boxRef = useRef(null);
-
-    useEffect(() => {
-        const onDoc = (e) => { if (boxRef.current && !boxRef.current.contains(e.target)) setOpen(false); };
-        document.addEventListener('mousedown', onDoc);
-        return () => document.removeEventListener('mousedown', onDoc);
-    }, []);
-
-    const current = models.find(m => m.id === value);
-    const filtered = useMemo(() => {
-        const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
-        const list = terms.length
-            ? models.filter(m => terms.every(t => m.id.toLowerCase().includes(t) || (m.name || '').toLowerCase().includes(t)))
-            : models;
-        return list.slice(0, 80);
-    }, [models, query]);
-
-    return (
-        <div className="mb-6" ref={boxRef}>
-            <div className="flex items-baseline justify-between mb-1">
-                <label className="text-sm font-bold text-slate-200">{label}</label>
-                {current && (
-                    <span className="text-xs text-slate-400 font-mono">
-                        in {fmtPrice(current.prompt_price_per_m)} / out {fmtPrice(current.completion_price_per_m)} per 1M · ctx {fmtNum(current.context_length)}
-                    </span>
-                )}
-            </div>
-            <p className="text-xs text-slate-500 mb-2">{hint}</p>
-            <div className="relative">
-                <button
-                    type="button"
-                    disabled={disabled}
-                    onClick={() => setOpen(o => !o)}
-                    className={`w-full flex items-center justify-between bg-slate-900 border rounded-lg px-4 py-2.5 text-left font-mono text-sm transition-colors ${open ? 'border-cyan-500' : 'border-slate-700 hover:border-slate-500'} ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
-                >
-                    <span className="flex items-center gap-2 text-slate-200">
-                        {current?.recommended && <Star size={12} className="text-yellow-400" fill="currentColor" />}
-                        {value || <span className="text-slate-500">select a model…</span>}
-                    </span>
-                    <span className="text-slate-500 text-xs">{current ? current.name : (models.length ? 'not in catalog' : '')}</span>
-                </button>
-                {open && (
-                    <div className="absolute z-30 mt-1 w-full bg-slate-900 border border-slate-700 rounded-lg shadow-2xl overflow-hidden">
-                        <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-800">
-                            <Search size={14} className="text-slate-500" />
-                            <input
-                                autoFocus
-                                value={query}
-                                onChange={e => setQuery(e.target.value)}
-                                onKeyDown={e => { if (e.key === 'Escape') setOpen(false); if (e.key === 'Enter' && filtered[0]) { onChange(filtered[0].id); setOpen(false); } }}
-                                placeholder="Search models (e.g. sonnet, gpt-5 mini, gemini flash)…"
-                                className="flex-1 bg-transparent text-sm text-slate-200 focus:outline-none"
-                            />
-                            <span className="text-[10px] text-slate-500">{filtered.length}{models.length > filtered.length ? ` / ${models.length}` : ''}</span>
-                        </div>
-                        <ul className="max-h-72 overflow-y-auto">
-                            {filtered.length === 0 && <li className="px-3 py-3 text-sm text-slate-500">No models match.</li>}
-                            {filtered.map(m => (
-                                <li key={m.id}>
-                                    <button
-                                        type="button"
-                                        onClick={() => { onChange(m.id); setOpen(false); setQuery(''); }}
-                                        className={`w-full text-left px-3 py-2 hover:bg-slate-800 flex items-center justify-between gap-3 ${m.id === value ? 'bg-slate-800/70' : ''}`}
-                                    >
-                                        <span className="min-w-0">
-                                            <span className="flex items-center gap-1.5 font-mono text-sm text-slate-200 truncate">
-                                                {m.recommended && <Star size={11} className="text-yellow-400 shrink-0" fill="currentColor" />}
-                                                {m.id}
-                                                {m.id === value && <Check size={12} className="text-cyan-400 shrink-0" />}
-                                            </span>
-                                            <span className="block text-[11px] text-slate-500 truncate">{m.name}{m.supports_json ? '' : ' · no JSON mode'}</span>
-                                        </span>
-                                        <span className="shrink-0 text-[11px] font-mono text-slate-400 text-right">
-                                            <span className="block">{fmtPrice(m.prompt_price_per_m)} in</span>
-                                            <span className="block">{fmtPrice(m.completion_price_per_m)} out</span>
-                                        </span>
-                                    </button>
-                                </li>
-                            ))}
-                        </ul>
-                    </div>
-                )}
-            </div>
-        </div>
-    );
-}
 
 /* ------------------------------------------------------------------ */
 /* Page                                                                */
@@ -117,19 +25,10 @@ function ModelSelect({ label, hint, value, onChange, models, disabled }) {
 export default function Settings() {
     const [loading, setLoading] = useState(true);
     const [settings, setSettings] = useState(null);
-    const [models, setModels] = useState([]);
-    const [catalogStatus, setCatalogStatus] = useState(null);
 
-    // editable draft
-    const [draft, setDraft] = useState({ stage1: '', stage2: '', summary: '', report: '', stage2_threshold: 60, score_threshold: 85 });
-    const [saving, setSaving] = useState(false);
-    const [saveMsg, setSaveMsg] = useState(null); // {type:'ok'|'err', text}
 
-    const [estimate, setEstimate] = useState(null);
-    const [estimating, setEstimating] = useState(false);
     const [usage, setUsage] = useState(null);
     const [usageLoading, setUsageLoading] = useState(true);
-    const [saveWarnings, setSaveWarnings] = useState([]);
 
     // generic configuration (all .env keys)
     const [allSettings, setAllSettings] = useState(null);
@@ -160,6 +59,16 @@ export default function Settings() {
         return () => clearInterval(t);
     }, [embStatus?.backfill?.running, loadEmb]);
 
+    // Claude (verdict pipeline)
+    const [claudeModels, setClaudeModels] = useState([]);
+    const [budget, setBudget] = useState(null);
+    const loadClaude = useCallback(async () => {
+        try {
+            const [m, b] = await Promise.all([axios.get(`${API_URL}/claude/models`), axios.get(`${API_URL}/claude/budget`)]);
+            setClaudeModels(m.data.models || []); setBudget(b.data);
+        } catch (e) { console.error(e); }
+    }, []);
+
     const loadAllSettings = useCallback(async () => {
         try {
             const res = await axios.get(`${API_URL}/settings`);
@@ -173,25 +82,11 @@ export default function Settings() {
     const loadAll = useCallback(async () => {
         setLoading(true);
         try {
-            const [sRes, mRes] = await Promise.all([
-                axios.get(`${API_URL}/settings/llm`),
-                axios.get(`${API_URL}/models`),
-            ]);
+            const sRes = await axios.get(`${API_URL}/settings/llm`);
             setSettings(sRes.data);
-            setDraft({
-                stage1: sRes.data.models.stage1,
-                stage2: sRes.data.models.stage2,
-                summary: sRes.data.models.summary,
-                report: sRes.data.models.report,
-                stage2_threshold: sRes.data.thresholds.stage2_threshold,
-                score_threshold: sRes.data.thresholds.score_threshold,
-            });
-            setModels(mRes.data.models || []);
-            setCatalogStatus(mRes.data.catalog || null);
             setProfileDraft(sRes.data.profile || '');
         } catch (e) {
             console.error('Failed to load settings', e);
-            setSaveMsg({ type: 'err', text: 'Failed to load settings. Check backend logs.' });
         } finally {
             setLoading(false);
         }
@@ -209,64 +104,7 @@ export default function Settings() {
         }
     }, []);
 
-    useEffect(() => { loadAll(); loadUsage(); loadAllSettings(); loadEmb(); }, [loadAll, loadUsage, loadAllSettings, loadEmb]);
-
-    // Debounced cost estimate whenever the draft changes
-    useEffect(() => {
-        if (!draft.stage1 || !draft.stage2 || !draft.summary) return;
-        const t = setTimeout(async () => {
-            setEstimating(true);
-            try {
-                const res = await axios.get(`${API_URL}/llm/estimate`, {
-                    params: {
-                        stage1_model: draft.stage1, stage2_model: draft.stage2, summary_model: draft.summary, report_model: draft.report,
-                        stage2_threshold: draft.stage2_threshold, score_threshold: draft.score_threshold,
-                    },
-                });
-                setEstimate(res.data);
-            } catch (e) {
-                console.error('Estimate failed', e);
-            } finally {
-                setEstimating(false);
-            }
-        }, 350);
-        return () => clearTimeout(t);
-    }, [draft]);
-
-    const dirty = settings && (
-        draft.stage1 !== settings.models.stage1 ||
-        draft.stage2 !== settings.models.stage2 ||
-        draft.summary !== settings.models.summary ||
-        draft.report !== settings.models.report ||
-        Number(draft.stage2_threshold) !== settings.thresholds.stage2_threshold ||
-        Number(draft.score_threshold) !== settings.thresholds.score_threshold
-    );
-
-    const handleSave = async () => {
-        setSaving(true); setSaveMsg(null);
-        try {
-            const res = await axios.put(`${API_URL}/settings/llm`, {
-                stage1_model: draft.stage1, stage2_model: draft.stage2, summary_model: draft.summary, report_model: draft.report,
-                stage2_threshold: Number(draft.stage2_threshold), score_threshold: Number(draft.score_threshold),
-            });
-            setSettings(res.data);
-            setSaveWarnings(res.data.warnings || []);
-            setSaveMsg({ type: 'ok', text: `Saved to ${res.data.env_file?.path || 'the env file'}. The next run will use these models.` });
-            loadAllSettings();
-        } catch (e) {
-            setSaveMsg({ type: 'err', text: e.response?.data?.detail || 'Failed to save settings' });
-        } finally {
-            setSaving(false);
-        }
-    };
-
-    const handleReset = () => {
-        if (!settings) return;
-        setDraft({
-            stage1: settings.defaults.stage1, stage2: settings.defaults.stage2, summary: settings.defaults.summary, report: settings.defaults.report,
-            stage2_threshold: settings.defaults.stage2_threshold, score_threshold: settings.defaults.score_threshold,
-        });
-    };
+    useEffect(() => { loadAll(); loadUsage(); loadAllSettings(); loadEmb(); loadClaude(); }, [loadAll, loadUsage, loadAllSettings, loadEmb, loadClaude]);
 
     const handleCfgSave = async () => {
         if (!Object.keys(cfgDraft).length) return;
@@ -280,7 +118,7 @@ export default function Settings() {
             const keys = Object.keys(res.data.applied || {}).filter(k => !k.startsWith('_'));
             setCfgMsg({ type: 'ok', text: keys.length ? `Saved ${keys.join(', ')} to ${res.data.env_file?.path}.` : 'Nothing to save.' });
             // provider / thresholds may have changed -> refresh the models card too
-            loadAll();
+            loadAll(); loadClaude();
         } catch (e) {
             setCfgMsg({ type: 'err', text: e.response?.data?.detail || 'Failed to save configuration' });
         } finally {
@@ -302,29 +140,60 @@ export default function Settings() {
         }
     };
 
-    const refreshCatalog = async () => {
-        try {
-            const res = await axios.get(`${API_URL}/models`, { params: { refresh: true } });
-            setModels(res.data.models || []);
-            setCatalogStatus(res.data.catalog || null);
-        } catch (e) { console.error(e); }
+
+    // ---- helpers for the env-backed fields --------------------------------------------------------
+    const fieldByKey = Object.fromEntries((allSettings?.fields || []).map(f => [f.key, f]));
+    const valueOf = (k) => (cfgDraft[k] !== undefined ? cfgDraft[k] : fieldByKey[k]?.value);
+    const anthropicOk = !!fieldByKey.ANTHROPIC_API_KEY?.configured;
+    const openrouterOk = !!fieldByKey.OPENROUTER_API_KEY?.configured;
+    const chatProvider = valueOf('CHAT_PROVIDER') || 'anthropic';
+    const chatOk = chatProvider === 'openrouter' ? openrouterOk : anthropicOk;
+    const nDirty = Object.keys(cfgDraft).length;
+
+    const F = (key, extra = {}) => {
+        const f = fieldByKey[key];
+        if (!f) return null;
+        const field = { ...f, ...extra };
+        return (
+            <ConfigField key={key} field={field}
+                draftValue={cfgDraft[key]}
+                onChange={v => setCfgDraft(d => ({ ...d, [key]: v }))}
+                onRevert={() => setCfgDraft(d => { const n = { ...d }; delete n[key]; return n; })}
+                showSecret={!!showSecret[key]}
+                toggleSecret={() => setShowSecret(x => ({ ...x, [key]: !x[key] }))}
+            />
+        );
     };
 
-    const Card = ({ icon: Icon, title, children, right }) => (
-        <section className="bg-slate-800 rounded-2xl border border-slate-700 shadow-xl overflow-hidden mb-8">
-            <div className="flex items-center justify-between px-6 md:px-8 pt-6">
-                <h3 className="flex items-center gap-2 text-xl font-bold text-slate-200"><Icon size={20} className="text-cyan-400" /> {title}</h3>
-                {right}
+    const ClaudeModel = (key, label, hint) => {
+        const f = fieldByKey[key];
+        if (!f) return null;
+        const val = valueOf(key) || '';
+        const known = claudeModels.find(m => m.id === val);
+        const dirty = cfgDraft[key] !== undefined;
+        return (
+            <div key={key}>
+                <div className="flex items-baseline justify-between mb-1">
+                    <label className="text-sm font-bold text-slate-200">{label}</label>
+                    {known && <span className="text-[11px] font-mono text-slate-500">${known.prompt_price_per_m} in / ${known.completion_price_per_m} out per 1M</span>}
+                </div>
+                <p className="text-[11px] text-slate-500 mb-1.5">{hint}</p>
+                <select value={val} onChange={e => setCfgDraft(d => ({ ...d, [key]: e.target.value }))}
+                    className={`w-full bg-slate-900 border rounded-lg px-3 py-2 text-sm font-mono text-slate-200 focus:outline-none focus:border-cyan-500 ${dirty ? 'border-cyan-500/60' : 'border-slate-700'}`}>
+                    {!known && <option value={val}>{val || '— select —'} {val ? '(not a Claude model)' : ''}</option>}
+                    {claudeModels.map(m => <option key={m.id} value={m.id}>{m.id} · {m.name}</option>)}
+                </select>
             </div>
-            <div className="p-6 md:p-8 pt-4">{children}</div>
-        </section>
-    );
+        );
+    };
+
+    const spentPct = budget ? Math.min(100, Math.round(100 * budget.spent / Math.max(1, budget.budget))) : 0;
 
     return (
-        <div className="min-h-screen bg-[#0f172a] text-slate-200 p-6 md:p-12 font-sans selection:bg-cyan-500/30">
+        <div className="min-h-screen bg-[#0f172a] text-slate-200 p-6 md:p-12 pb-32 font-sans selection:bg-cyan-500/30">
             <div className="max-w-4xl mx-auto">
                 {/* Header */}
-                <header className="flex items-center gap-4 mb-10">
+                <header className="flex items-center gap-4 mb-6">
                     <Link to="/" className="p-2 rounded-full bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700 transition-colors" title="Back to Home">
                         <ArrowLeft size={24} />
                     </Link>
@@ -334,131 +203,133 @@ export default function Settings() {
                     </div>
                 </header>
 
-                {loading ? (
+                {loading || !allSettings ? (
                     <div className="animate-pulse space-y-4">
                         <div className="h-24 bg-slate-800 rounded-2xl"></div>
                         <div className="h-64 bg-slate-800 rounded-2xl"></div>
                     </div>
                 ) : (
                     <>
-                        {/* Provider + Models */}
-                        <Card icon={Cpu} title="Models"
-                            right={
-                                <div className="text-xs text-slate-400 flex items-center gap-3">
-                                    <span>
-                                        Provider: <span className="font-mono text-slate-200">{settings?.provider?.name}</span>
-                                        {' · '}
-                                        {settings?.provider?.key_configured
-                                            ? <span className="text-green-400">API key configured</span>
-                                            : <span className="text-red-400">no API key</span>}
-                                    </span>
-                                    <button onClick={refreshCatalog} className="flex items-center gap-1 px-2 py-1 rounded bg-slate-700/60 hover:bg-slate-600 text-slate-300" title={`Catalog: ${catalogStatus?.count || 0} models${catalogStatus?.last_error ? ` · error: ${catalogStatus.last_error}` : ''}`}>
-                                        <RefreshCw size={12} /> {catalogStatus?.count || 0} models
-                                    </button>
-                                </div>
-                            }
-                        >
-                            {!models.length && (
-                                <div className="flex items-start gap-2 text-sm text-yellow-300 bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3 mb-5">
-                                    <AlertTriangle size={16} className="mt-0.5 shrink-0" />
-                                    <span>Model catalog unavailable ({catalogStatus?.last_error || 'not loaded'}). You can still type model ids, but prices and validation are disabled.</span>
-                                </div>
-                            )}
-                            {models.length ? (
-                                <>
-                                    <ModelSelect label="Stage 1 · Screening" hint={TASK_META.score_stage1.hint} value={draft.stage1} onChange={v => setDraft(d => ({ ...d, stage1: v }))} models={models} />
-                                    <ModelSelect label="Stage 2 · Review" hint={TASK_META.score_stage2.hint} value={draft.stage2} onChange={v => setDraft(d => ({ ...d, stage2: v }))} models={models} />
-                                    <ModelSelect label="Summary" hint={TASK_META.summarize.hint} value={draft.summary} onChange={v => setDraft(d => ({ ...d, summary: v }))} models={models} />
-                                    <ModelSelect label="Reports" hint={TASK_META.report.hint} value={draft.report} onChange={v => setDraft(d => ({ ...d, report: v }))} models={models} />
-                                </>
-                            ) : (
-                                ['stage1', 'stage2', 'summary', 'report'].map(k => (
-                                    <div key={k} className="mb-5">
-                                        <label className="text-sm font-bold text-slate-200 block mb-1">{k}</label>
-                                        <input value={draft[k]} onChange={e => setDraft(d => ({ ...d, [k]: e.target.value }))} className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2.5 font-mono text-sm text-slate-200 focus:outline-none focus:border-cyan-500" />
-                                    </div>
-                                ))
-                            )}
+                        {/* Status strip */}
+                        <div className="flex flex-wrap items-center gap-2 mb-8">
+                            <span className="text-sm text-slate-400 mr-1">Chat models via</span>
+                            <div className="inline-flex rounded-lg border border-slate-700 overflow-hidden mr-2">
+                                {[['anthropic', 'Claude API'], ['openrouter', 'OpenRouter']].map(([v, label]) => (
+                                    <button key={v} onClick={() => setCfgDraft(d => ({ ...d, CHAT_PROVIDER: v }))}
+                                        className={`px-3 py-1.5 text-sm font-bold ${chatProvider === v ? 'bg-cyan-500 text-slate-900' : 'bg-slate-800 text-slate-400 hover:text-slate-200'}`}>{label}</button>
+                                ))}
+                            </div>
+                            <Chip ok={chatOk}>{chatProvider === 'openrouter' ? 'OpenRouter key' : 'Anthropic key'} {chatOk ? 'configured' : 'missing'}</Chip>
+                            <Chip ok={openrouterOk}>Embeddings → OpenRouter {openrouterOk ? '' : '(no key)'}</Chip>
+                            {budget && <Chip ok={budget.remaining > 0}>${budget.spent.toFixed(2)} / ${budget.budget} this cycle</Chip>}
+                        </div>
 
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-2">
-                                <div>
-                                    <label className="text-sm font-bold text-slate-200 block mb-1">Stage-2 threshold</label>
-                                    <p className="text-xs text-slate-500 mb-2">Stage-1 score needed to trigger the stage-2 review. Lower = more papers reviewed (higher recall, higher cost).</p>
-                                    <input type="number" min="0" max="100" value={draft.stage2_threshold} onChange={e => setDraft(d => ({ ...d, stage2_threshold: e.target.value }))} className="w-32 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-cyan-500" />
+                                {settings?.warnings?.length > 0 && <div className="-mt-4 mb-6"><Warnings items={settings.warnings} /></div>}
+                                {/* Pipeline */}
+                                <Card icon={Layers} title="Pipeline">
+                                    <p className="text-xs text-slate-500 mb-5">Every new paper → ① Screen (relevance tier) → ② Review of the relevant ones (verdict + affiliations) → ③ Deep read of Must Read / Worth Reading papers (final verdict, TL;DR, paragraph notes, claim flags) + translation.</p>
+                                    <Grid>
+                                        {ClaudeModel('LLM_MODEL_STAGE1', '① Screen', 'Title + abstract of every new paper → relevance 0-5.')}
+                                        {ClaudeModel('LLM_MODEL_STAGE2', '② Review', 'Abstract + first part of the paper → verdict, affiliations, project matches.')}
+                                        {ClaudeModel('LLM_MODEL_SUMMARY', '③ Deep read', 'Whole paper → final verdict, TL;DR, paragraph notes, claim flags.')}
+                                        {ClaudeModel('LLM_MODEL_TRANSLATE', 'Translation', 'Full Chinese translation for the reading page.')}
+                                        {F('SUMMARY_LANGUAGE', { label: 'TL;DR and notes language' })}
+                                        {F('SCREEN_MIN_RELEVANCE', { label: 'Review papers with relevance ≥', description: 'Screen tier needed to go on to review (4 = strong interest or core).' })}
+                                        {F('DEEP_READ_MAX_PER_RUN')}
+                                        {F('STAGE2_TEXT_CHAR_LIMIT', { label: 'Review excerpt (chars)', description: 'How much of the paper the reviewer sees.' })}
+                                    </Grid>
+                                </Card>
+
+                                {/* Budget */}
+                                <Card icon={Wallet} title="Budget & batch">
+                                    {budget && (
+                                        <div className="mb-6">
+                                            <div className="flex items-baseline justify-between text-sm mb-1.5">
+                                                <span className="text-slate-300">Spent this cycle (since {new Date(budget.cycle_start).toLocaleDateString()})</span>
+                                                <span className="font-mono text-slate-200">${budget.spent.toFixed(2)} / ${budget.budget}</span>
+                                            </div>
+                                            <div className="h-2 rounded-full bg-slate-900 overflow-hidden"><div className={`h-full ${spentPct > 90 ? 'bg-red-400' : 'bg-cyan-500'}`} style={{ width: `${spentPct}%` }} /></div>
+                                            <p className="text-[11px] text-slate-500 mt-1.5">List-price estimate from the call log. When it is used up, stages are trimmed or skipped and the papers wait for the next cycle; on-demand deep reads are refused.</p>
+                                        </div>
+                                    )}
+                                    <Grid>
+                                        {F('CLAUDE_MONTHLY_BUDGET')}
+                                        {F('CLAUDE_BUDGET_RESET_DAY')}
+                                        {F('LLM_USE_BATCH', chatProvider === 'openrouter' ? { description: 'Claude API only — OpenRouter has no Batch API, so calls run in real time (full price).' } : {})}
+                                        {F('BATCH_MAX_WAIT_MINUTES')}
+                                    </Grid>
+                                </Card>
+
+                        {/* Profile & sources */}
+                        <Card icon={User} title="What to look for"
+                            right={<Link to="/projects" className="flex items-center gap-1.5 text-xs px-2 py-1 rounded bg-slate-700/60 hover:bg-slate-600 text-slate-300"><FolderKanban size={12} /> Projects</Link>}>
+                            <div className="mb-5">
+                                <div className="flex items-baseline justify-between mb-1">
+                                    <label className="text-sm font-bold text-slate-200">Research profile</label>
+                                    <span className="text-[11px] text-slate-500">{(profileDraft || '').length} chars</span>
                                 </div>
-                                <div>
-                                    <label className="text-sm font-bold text-slate-200 block mb-1">Score threshold</label>
-                                    <p className="text-xs text-slate-500 mb-2">Final score needed to summarize + notify.</p>
-                                    <input type="number" min="0" max="100" value={draft.score_threshold} onChange={e => setDraft(d => ({ ...d, score_threshold: e.target.value }))} className="w-32 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-cyan-500" />
+                                <p className="text-[11px] text-slate-500 mb-1.5">Core / strong interests, methodological angles, decision rules and exclusions. Every stage judges relevance against this.</p>
+                                <textarea value={profileDraft} onChange={e => setProfileDraft(e.target.value)} spellCheck={false}
+                                    className="w-full h-72 bg-slate-900 border border-slate-700 rounded-xl p-4 text-slate-300 font-mono text-[13px] focus:outline-none focus:border-cyan-500 resize-y leading-relaxed" />
+                                <div className="flex items-center gap-3 mt-3">
+                                    <button onClick={handleProfileSave} disabled={profileSaving || profileDraft === (settings?.profile || '')} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-bold ${profileSaving || profileDraft === (settings?.profile || '') ? 'bg-slate-700 text-slate-500 cursor-not-allowed' : 'bg-cyan-500 hover:bg-cyan-400 text-slate-900'}`}><Save size={14} /> {profileSaving ? 'Saving…' : 'Save profile'}</button>
+                                    {profileDraft !== (settings?.profile || '') && <button onClick={() => setProfileDraft(settings?.profile || '')} className="px-3 py-1.5 rounded-lg text-sm text-slate-300 hover:bg-slate-700">Discard</button>}
+                                    {profileMsg && <span className={`text-sm ${profileMsg.type === 'ok' ? 'text-green-400' : 'text-red-400'}`}>{profileMsg.text}</span>}
                                 </div>
                             </div>
-
-                            <div className="flex items-center gap-3 mt-8">
-                                <button onClick={handleSave} disabled={!dirty || saving} className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold transition-colors ${!dirty || saving ? 'bg-slate-700 text-slate-500 cursor-not-allowed' : 'bg-cyan-500 hover:bg-cyan-400 text-slate-900'}`}>
-                                    <Save size={16} /> {saving ? 'Saving…' : 'Save'}
-                                </button>
-                                <button onClick={handleReset} className="px-4 py-2 rounded-lg font-medium text-slate-300 hover:bg-slate-700 transition-colors">Reset to built-in defaults</button>
-                                {saveMsg && (
-                                    <span className={`text-sm ${saveMsg.type === 'ok' ? 'text-green-400' : 'text-red-400'}`}>{saveMsg.text}</span>
-                                )}
-                            </div>
-                            {saveWarnings.length > 0 && <Warnings items={saveWarnings} />}
-                            <p className="text-[11px] text-slate-500 mt-4 flex items-center gap-1.5">
-                                <FileCog size={12} /> Stored in <code className="font-mono text-slate-400">{settings?.env_file?.path}</code>
-                                {settings?.env_file && !settings.env_file.writable && <span className="text-red-400">(not writable!)</span>}
-                                {' '}· changes apply to the next run, no restart needed.
-                            </p>
+                            <Grid>
+                                {F('ARXIV_CATEGORIES')}
+                                {F('PROJECT_SIM_THRESHOLD', { label: 'Project recall threshold' })}
+                            </Grid>
                         </Card>
 
-                        {/* Cost estimate */}
-                        <Card icon={DollarSign} title="Estimated cost"
-                            right={<span className="text-xs text-slate-500 flex items-center gap-1">{estimating && <RefreshCw size={12} className="animate-spin" />} for the selection above</span>}
-                        >
-                            {estimate ? (
-                                <>
-                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-                                        <Stat label="per day" value={fmtUSD(estimate.total_per_day, 3)} accent />
-                                        <Stat label="per month" value={fmtUSD(estimate.total_per_month, 2)} accent />
-                                        <Stat label="papers / day" value={estimate.per_task.find(t => t.task === 'score_stage1')?.calls_per_day ?? '—'} sub={estimate.per_task.find(t => t.task === 'score_stage1')?.volume_source === 'prior' ? 'prior (no recent papers)' : `observed · last ${estimate.volumes_meta?.window_days}d`} />
-                                        <Stat label="stage-2 / summaries per day" value={`${estimate.per_task.find(t => t.task === 'score_stage2')?.calls_per_day ?? '—'} / ${estimate.per_task.find(t => t.task === 'summarize')?.calls_per_day ?? '—'}`} />
-                                    </div>
-                                    <div className="overflow-x-auto">
-                                        <table className="w-full text-sm">
-                                            <thead>
-                                                <tr className="text-left text-xs uppercase tracking-wider text-slate-500 border-b border-slate-700">
-                                                    <th className="py-2 pr-4">Task</th><th className="py-2 pr-4">Model</th><th className="py-2 pr-4 text-right">Tokens / call</th><th className="py-2 pr-4 text-right">Calls / day</th><th className="py-2 pr-4 text-right">$ / call</th><th className="py-2 text-right">$ / day</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                {estimate.per_task.map(t => (
-                                                    <tr key={t.task} className="border-b border-slate-800/60">
-                                                        <td className="py-2 pr-4 text-slate-200">{TASK_META[t.task]?.label || t.task}</td>
-                                                        <td className="py-2 pr-4 font-mono text-xs text-slate-300">{t.model}{t.price_in_per_m === null && <span className="text-yellow-400 ml-1" title="not in catalog">?</span>}</td>
-                                                        <td className="py-2 pr-4 text-right font-mono text-xs text-slate-400" title={`${t.tokens_source}${t.token_samples ? ` · ${t.token_samples} samples` : ''}`}>{fmtNum(t.avg_prompt_tokens)} + {fmtNum(t.avg_completion_tokens)}<span className="text-slate-600"> {t.tokens_source === 'prior' ? '(prior)' : ''}</span></td>
-                                                        <td className="py-2 pr-4 text-right font-mono text-xs text-slate-400">{t.calls_per_day}</td>
-                                                        <td className="py-2 pr-4 text-right font-mono text-xs text-slate-300">{fmtUSD(t.cost_per_call, 5)}</td>
-                                                        <td className="py-2 text-right font-mono text-xs text-slate-200">{fmtUSD(t.cost_per_day, 3)}</td>
-                                                    </tr>
-                                                ))}
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                    <p className="flex items-start gap-1.5 text-[11px] text-slate-500 mt-4"><Info size={12} className="mt-0.5 shrink-0" /> List prices from the provider catalog × average tokens per call (observed from your history when ≥5 samples, otherwise a prior) × observed daily volumes. Real spend is tracked below.</p>
-                                </>
-                            ) : (
-                                <p className="text-sm text-slate-500">Select models to see an estimate.</p>
+                        {/* Hot lane */}
+                        <Card icon={Flame} title="Hot papers">
+                            <p className="text-xs text-slate-500 mb-5">Popular papers from Hugging Face Daily Papers get their own section in the digest — relevant or not — each pushed once.</p>
+                            <Grid>
+                                {F('HOT_ENABLED', { label: 'Hot section' })}
+                                {F('HOT_MAX_PER_RUN', { label: 'Papers per digest' })}
+                                {F('HOT_MIN_UPVOTES', { label: 'Minimum upvotes' })}
+                                {F('HOT_MIN_STARS', { label: 'or minimum GitHub stars' })}
+                                {F('HOT_LOOKBACK_DAYS', { label: 'Look back (days)' })}
+                                {F('HOT_WEB_SEARCH', { label: 'Web search for discussion' })}
+                            </Grid>
+                        </Card>
+
+                        {/* Delivery */}
+                        <Card icon={Send} title="Schedule & notifications">
+                            <Grid>
+                                {F('ENABLE_AUTO_UPDATE')}
+                                {F('AUTO_UPDATE_TIME')}
+                                {F('LARK_WEBHOOK_URL')}
+                                {F('PUBLIC_BASE_URL')}
+                            </Grid>
+                            {allSettings.scheduler?.next_run_time && (
+                                <p className="text-[11px] text-slate-500 mt-5 flex items-center gap-1.5"><Clock size={12} /> Next scheduled run: <span className="font-mono text-slate-400">{new Date(allSettings.scheduler.next_run_time).toLocaleString()}</span></p>
                             )}
                         </Card>
 
-                        {/* Actual usage */}
-                        <Card icon={Activity} title="Actual LLM spend"
-                            right={<button onClick={loadUsage} className="flex items-center gap-1 text-xs px-2 py-1 rounded bg-slate-700/60 hover:bg-slate-600 text-slate-300"><RefreshCw size={12} className={usageLoading ? 'animate-spin' : ''} /> refresh</button>}
-                        >
+                        {/* Keys */}
+                        <Card icon={KeyRound} title="API keys">
+                            <p className="text-xs text-slate-500 mb-5">Secrets are never sent to the browser: leave a field blank to keep the current key, type a new one to replace it.</p>
+                            <Grid>
+                                {F('ANTHROPIC_API_KEY', { description: 'Claude Console key — chat models when "Claude API" is selected (Batch API, subscription credits).' })}
+                                {F('OPENROUTER_API_KEY', { description: 'Embeddings (always), and chat models when "OpenRouter" is selected.' })}
+                            </Grid>
+                            <details className="mt-5 group">
+                                <summary className="cursor-pointer text-xs text-slate-500 hover:text-slate-300 flex items-center gap-1"><ChevronDown size={12} className="group-open:rotate-180 transition-transform" /> OpenRouter endpoint</summary>
+                                <div className="mt-4"><Grid>{F('OPENROUTER_BASE_URL')}</Grid></div>
+                            </details>
+                        </Card>
+
+                        {/* Spend */}
+                        <Card icon={Activity} title="LLM spend"
+                            right={<button onClick={loadUsage} className="flex items-center gap-1 text-xs px-2 py-1 rounded bg-slate-700/60 hover:bg-slate-600 text-slate-300"><RefreshCw size={12} className={usageLoading ? 'animate-spin' : ''} /> refresh</button>}>
                             {usage ? (
                                 <>
                                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
                                         {[['today', 'Today'], ['last_7d', 'Last 7 days'], ['last_30d', 'Last 30 days'], ['all_time', 'All time']].map(([k, label]) => (
-                                            <Stat key={k} label={label} value={fmtUSD(usage.periods[k].cost, 3)} sub={`${fmtNum(usage.periods[k].calls)} calls · ${fmtNum(usage.periods[k].prompt_tokens + usage.periods[k].completion_tokens)} tok`} />
+                                            <Stat key={k} label={label} value={fmtUSD(usage.periods[k].cost, 3)} sub={`${fmtNum(usage.periods[k].calls)} calls`} />
                                         ))}
                                     </div>
                                     {usage.breakdown.length ? (
@@ -466,7 +337,7 @@ export default function Settings() {
                                             <table className="w-full text-sm">
                                                 <thead>
                                                     <tr className="text-left text-xs uppercase tracking-wider text-slate-500 border-b border-slate-700">
-                                                        <th className="py-2 pr-4">Task</th><th className="py-2 pr-4">Model</th><th className="py-2 pr-4 text-right">Calls</th><th className="py-2 pr-4 text-right">Avg tokens</th><th className="py-2 pr-4 text-right">$ / call</th><th className="py-2 text-right">Cost ({usage.breakdown_days}d)</th>
+                                                        <th className="py-2 pr-4">Task</th><th className="py-2 pr-4">Model</th><th className="py-2 pr-4 text-right">Calls</th><th className="py-2 pr-4 text-right">$ / call</th><th className="py-2 text-right">Cost ({usage.breakdown_days}d)</th>
                                                     </tr>
                                                 </thead>
                                                 <tbody>
@@ -475,145 +346,98 @@ export default function Settings() {
                                                             <td className="py-2 pr-4 text-slate-200">{TASK_META[b.task]?.label || b.task}</td>
                                                             <td className="py-2 pr-4 font-mono text-xs text-slate-300">{b.model}</td>
                                                             <td className="py-2 pr-4 text-right font-mono text-xs text-slate-400">{fmtNum(b.calls)}</td>
-                                                            <td className="py-2 pr-4 text-right font-mono text-xs text-slate-400">{fmtNum(b.avg_prompt_tokens)} + {fmtNum(b.avg_completion_tokens)}</td>
                                                             <td className="py-2 pr-4 text-right font-mono text-xs text-slate-300">{fmtUSD(b.cost_per_call, 5)}</td>
-                                                            <td className="py-2 text-right font-mono text-xs text-slate-200">{fmtUSD(b.cost, 3)}{b.estimated_rows > 0 && <span className="text-slate-600" title={`${b.estimated_rows} calls had no reported cost; estimated from list price`}> ~</span>}</td>
+                                                            <td className="py-2 text-right font-mono text-xs text-slate-200">{fmtUSD(b.cost, 3)}</td>
                                                         </tr>
                                                     ))}
                                                 </tbody>
                                             </table>
                                         </div>
-                                    ) : (
-                                        <p className="text-sm text-slate-500">No LLM calls recorded yet. Usage is logged from the next run onward.</p>
+                                    ) : <p className="text-sm text-slate-500">No LLM calls recorded yet.</p>}
+                                </>
+                            ) : <p className="text-sm text-slate-500">{usageLoading ? 'Loading…' : 'Usage unavailable.'}</p>}
+                        </Card>
+
+                        {/* Advanced */}
+                        <details className="group bg-slate-800/60 rounded-2xl border border-slate-700 mb-8">
+                            <summary className="cursor-pointer px-6 md:px-8 py-5 flex items-center gap-2 text-lg font-bold text-slate-300"><ChevronDown size={18} className="group-open:rotate-180 transition-transform text-cyan-400" /> Advanced</summary>
+                            <div className="px-6 md:px-8 pb-8 space-y-8">
+                                <div>
+                                    <h4 className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-500 mb-3"><Search size={13} /> Embeddings</h4>
+                                    {embStatus && (
+                                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                                            <Stat label="model" value={<span className="text-sm">{embStatus.model}</span>} sub={`${embStatus.dim} dims`} />
+                                            <Stat label="embedded" value={fmtNum(embStatus.embedded)} sub={`of ${fmtNum(embStatus.total_papers)} papers`} accent />
+                                            <Stat label="missing" value={fmtNum(embStatus.missing)} />
+                                            <Stat label="index in memory" value={fmtNum(embStatus.index_size)} />
+                                        </div>
                                     )}
-                                </>
-                            ) : (
-                                <p className="text-sm text-slate-500">{usageLoading ? 'Loading…' : 'Usage unavailable.'}</p>
-                            )}
-                        </Card>
-
-                        {/* Configuration (.env) */}
-                        <Card icon={FileCog} title="Configuration"
-                            right={allSettings && (
-                                <span className="text-xs text-slate-500 flex items-center gap-2">
-                                    <code className="font-mono text-slate-400">{allSettings.env_file.path}</code>
-                                    {!allSettings.env_file.writable && <span className="text-red-400 font-bold">not writable</span>}
-                                    <button onClick={loadAllSettings} className="flex items-center gap-1 px-2 py-1 rounded bg-slate-700/60 hover:bg-slate-600 text-slate-300"><RefreshCw size={12} /> reload</button>
-                                </span>
-                            )}
-                        >
-                            {!allSettings ? (
-                                <p className="text-sm text-slate-500">Loading…</p>
-                            ) : (
-                                <>
-                                    <p className="text-xs text-slate-500 mb-5 leading-relaxed">
-                                        Every key of the env file, editable here. Saving rewrites only the changed keys (comments and other keys are preserved) and applies immediately — no restart.
-                                        Secrets are never sent to the browser: leave a secret field blank to keep the current value, type a new one to replace it.
-                                        A <span className="text-yellow-300">env var</span> badge means a process environment variable (e.g. docker-compose) overrides the file — edit it there instead.
-                                    </p>
-                                    {CONFIG_GROUPS.map(g => {
-                                        const fields = allSettings.fields.filter(f => f.group === g.key && f.owner !== 'models');
-                                        if (!fields.length) return null;
-                                        return (
-                                            <div key={g.key} className="mb-6">
-                                                <h4 className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-500 mb-3"><g.icon size={13} /> {g.label}</h4>
-                                                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4">
-                                                    {fields.map(f => (
-                                                        <ConfigField key={f.key} field={f}
-                                                            draftValue={cfgDraft[f.key]}
-                                                            onChange={v => setCfgDraft(d => ({ ...d, [f.key]: v }))}
-                                                            onRevert={() => setCfgDraft(d => { const n = { ...d }; delete n[f.key]; return n; })}
-                                                            showSecret={!!showSecret[f.key]}
-                                                            toggleSecret={() => setShowSecret(x => ({ ...x, [f.key]: !x[f.key] }))}
-                                                        />
-                                                    ))}
-                                                </div>
-                                            </div>
-                                        );
-                                    })}
-                                    <div className="flex items-center gap-3 mt-2">
-                                        <button onClick={handleCfgSave} disabled={!Object.keys(cfgDraft).length || cfgSaving} className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold transition-colors ${!Object.keys(cfgDraft).length || cfgSaving ? 'bg-slate-700 text-slate-500 cursor-not-allowed' : 'bg-cyan-500 hover:bg-cyan-400 text-slate-900'}`}>
-                                            <Save size={16} /> {cfgSaving ? 'Saving…' : `Save${Object.keys(cfgDraft).length ? ` (${Object.keys(cfgDraft).length})` : ''}`}
+                                    {embStatus && (
+                                        <button onClick={startBackfill} disabled={embBusy || embStatus.backfill?.running || !embStatus.missing} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-bold mb-4 ${embBusy || embStatus.backfill?.running || !embStatus.missing ? 'bg-slate-700 text-slate-500 cursor-not-allowed' : 'bg-cyan-500 hover:bg-cyan-400 text-slate-900'}`}>
+                                            <RefreshCw size={14} className={embStatus.backfill?.running ? 'animate-spin' : ''} /> {embStatus.backfill?.running ? `Backfilling ${fmtNum(embStatus.backfill.done)} / ${fmtNum(embStatus.backfill.total)}…` : (embStatus.missing ? `Backfill ${fmtNum(embStatus.missing)} papers` : 'All papers embedded')}
                                         </button>
-                                        {Object.keys(cfgDraft).length > 0 && <button onClick={() => { setCfgDraft({}); setShowSecret({}); }} className="px-4 py-2 rounded-lg font-medium text-slate-300 hover:bg-slate-700 transition-colors">Discard</button>}
-                                        {cfgMsg && <span className={`text-sm ${cfgMsg.type === 'ok' ? 'text-green-400' : 'text-red-400'}`}>{cfgMsg.text}</span>}
-                                    </div>
-                                    {cfgWarnings.length > 0 && <Warnings items={cfgWarnings} />}
-                                    {allSettings.scheduler?.next_run_time && (
-                                        <p className="text-[11px] text-slate-500 mt-4 flex items-center gap-1.5"><Clock size={12} /> Next scheduled run: <span className="font-mono text-slate-400">{new Date(allSettings.scheduler.next_run_time).toLocaleString()}</span></p>
                                     )}
-                                </>
-                            )}
-                        </Card>
-
-                        {/* Embeddings */}
-                        <Card icon={Search} title="Embeddings"
-                            right={<button onClick={loadEmb} className="flex items-center gap-1 text-xs px-2 py-1 rounded bg-slate-700/60 hover:bg-slate-600 text-slate-300"><RefreshCw size={12} /> refresh</button>}
-                        >
-                            {!embStatus ? <p className="text-sm text-slate-500">Loading…</p> : (
-                                <>
-                                    <p className="text-xs text-slate-500 mb-4">Vectors of title+abstract power <b>Semantic</b> search on the main page, <b>Related papers</b> on each paper page and the topic clusters in reports. New papers are embedded during each run; use Backfill for the history (≈ $0.02 per 1k papers with voyage-4). Model and dimensions are set in Configuration → Retrieval above.</p>
-                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-                                        <Stat label="model" value={<span className="text-sm">{embStatus.model}</span>} sub={`${embStatus.dim} dims`} />
-                                        <Stat label="embedded" value={fmtNum(embStatus.embedded)} sub={`of ${fmtNum(embStatus.total_papers)} papers`} accent />
-                                        <Stat label="missing" value={fmtNum(embStatus.missing)} sub={embStatus.stale_other_model ? `${fmtNum(embStatus.stale_other_model)} from another model` : null} />
-                                        <Stat label="index in memory" value={fmtNum(embStatus.index_size)} sub={embStatus.index_loaded_at ? new Date(embStatus.index_loaded_at).toLocaleTimeString() : null} />
-                                    </div>
-                                    <div className="flex items-center gap-3">
-                                        <button onClick={startBackfill} disabled={embBusy || embStatus.backfill?.running || !embStatus.missing} className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold transition-colors ${embBusy || embStatus.backfill?.running || !embStatus.missing ? 'bg-slate-700 text-slate-500 cursor-not-allowed' : 'bg-cyan-500 hover:bg-cyan-400 text-slate-900'}`}>
-                                            <RefreshCw size={16} className={embStatus.backfill?.running ? 'animate-spin' : ''} /> {embStatus.backfill?.running ? `Backfilling ${fmtNum(embStatus.backfill.done)} / ${fmtNum(embStatus.backfill.total)}…` : (embStatus.missing ? `Backfill ${fmtNum(embStatus.missing)} papers` : 'All papers embedded')}
-                                        </button>
-                                        {embStatus.backfill?.error && <span className="text-sm text-red-400">{embStatus.backfill.error}</span>}
-                                        {!embStatus.key_configured && <span className="text-sm text-red-400">No API key configured.</span>}
-                                    </div>
-                                </>
-                            )}
-                        </Card>
-
-                        {/* Profile */}
-                        <Card icon={User} title="User Profile Prompt"
-                            right={<span className="text-xs text-slate-500">{(profileDraft || '').length} chars</span>}
-                        >
-                            <p className="text-slate-400 mb-4 leading-relaxed text-sm">
-                                Guides stage-1/stage-2 scoring (relevance tiers, exclusions) and the "Relevance to Me" section of summaries.
-                                Saved to <code className="bg-slate-900 px-1.5 py-0.5 rounded text-cyan-400 font-mono text-xs border border-slate-700">USER_PROFILE</code> in the env file and used by the next run.
-                                {settings?.summary_language && <> Summary language: <span className="font-mono text-slate-300">{settings.summary_language}</span> (change it in Configuration above).</>}
-                            </p>
-                            <textarea
-                                value={profileDraft}
-                                onChange={e => setProfileDraft(e.target.value)}
-                                spellCheck={false}
-                                className="w-full h-80 bg-slate-900 border border-slate-700 rounded-xl p-6 text-slate-300 font-mono text-sm focus:outline-none focus:border-cyan-500 resize-y shadow-inner leading-relaxed"
-                            />
-                            <div className="flex items-center gap-3 mt-4">
-                                <button onClick={handleProfileSave} disabled={profileSaving || profileDraft === (settings?.profile || '')} className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold transition-colors ${profileSaving || profileDraft === (settings?.profile || '') ? 'bg-slate-700 text-slate-500 cursor-not-allowed' : 'bg-cyan-500 hover:bg-cyan-400 text-slate-900'}`}>
-                                    <Save size={16} /> {profileSaving ? 'Saving…' : 'Save profile'}
-                                </button>
-                                {profileDraft !== (settings?.profile || '') && <button onClick={() => setProfileDraft(settings?.profile || '')} className="px-4 py-2 rounded-lg font-medium text-slate-300 hover:bg-slate-700 transition-colors">Discard</button>}
-                                {profileMsg && <span className={`text-sm ${profileMsg.type === 'ok' ? 'text-green-400' : 'text-red-400'}`}>{profileMsg.text}</span>}
+                                    <Grid>{F('EMBEDDING_MODEL')}{F('EMBEDDING_DIM')}</Grid>
+                                </div>
+                                <div>
+                                    <h4 className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-500 mb-3"><Database size={13} /> System (read-only)</h4>
+                                    <Grid>{F('DATABASE_URL')}{F('DEV_COMMIT')}</Grid>
+                                    <p className="text-[11px] text-slate-500 mt-4 flex items-center gap-1.5"><FileCog size={12} /> Settings are stored in <code className="font-mono text-slate-400">{allSettings.env_file.path}</code>{!allSettings.env_file.writable && <span className="text-red-400"> (not writable!)</span>} and apply to the next run without a restart.</p>
+                                </div>
                             </div>
-                        </Card>
+                        </details>
                     </>
                 )}
             </div>
+
+            {/* Sticky save bar for env-backed settings */}
+            {(nDirty > 0 || cfgMsg) && (
+                <div className="fixed bottom-0 inset-x-0 z-40 bg-slate-900/95 backdrop-blur border-t border-slate-700">
+                    <div className="max-w-4xl mx-auto px-6 py-3 flex flex-wrap items-center gap-3">
+                        {nDirty > 0 && (
+                            <>
+                                <span className="text-sm text-slate-300">{nDirty} unsaved change{nDirty > 1 ? 's' : ''}: <span className="font-mono text-xs text-slate-500">{Object.keys(cfgDraft).join(', ')}</span></span>
+                                <button onClick={handleCfgSave} disabled={cfgSaving} className="ml-auto flex items-center gap-2 px-4 py-2 rounded-lg font-bold bg-cyan-500 hover:bg-cyan-400 text-slate-900"><Save size={16} /> {cfgSaving ? 'Saving…' : 'Save'}</button>
+                                <button onClick={() => { setCfgDraft({}); setShowSecret({}); }} className="px-4 py-2 rounded-lg font-medium text-slate-300 hover:bg-slate-700">Discard</button>
+                            </>
+                        )}
+                        {cfgMsg && nDirty === 0 && <span className={`text-sm ${cfgMsg.type === 'ok' ? 'text-green-400' : 'text-red-400'}`}>{cfgMsg.text}</span>}
+                        {cfgWarnings.length > 0 && <div className="w-full"><Warnings items={cfgWarnings} /></div>}
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
 
-const CONFIG_GROUPS = [
-    { key: 'provider', label: 'LLM provider', icon: KeyRound },
-    { key: 'pipeline', label: 'Pipeline', icon: Cpu },
-    { key: 'schedule', label: 'Schedule', icon: Clock },
-    { key: 'reports', label: 'Reports', icon: Activity },
-    { key: 'retrieval', label: 'Retrieval (embeddings)', icon: Search },
-    { key: 'notification', label: 'Notification', icon: Bell },
-    { key: 'system', label: 'System (read-only)', icon: Database },
-];
+function Card({ icon: Icon, title, children, right }) {
+    return (
+        <section className="bg-slate-800 rounded-2xl border border-slate-700 shadow-xl overflow-hidden mb-8">
+            <div className="flex items-center justify-between px-6 md:px-8 pt-6">
+                <h3 className="flex items-center gap-2 text-xl font-bold text-slate-200"><Icon size={20} className="text-cyan-400" /> {title}</h3>
+                {right}
+            </div>
+            <div className="p-6 md:p-8 pt-4">{children}</div>
+        </section>
+    );
+}
+
+function Grid({ children }) {
+    return <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-5">{children}</div>;
+}
+
+function Chip({ ok, children }) {
+    return (
+        <span className={`inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border ${ok ? 'bg-green-500/10 text-green-300 border-green-500/30' : 'bg-red-500/10 text-red-300 border-red-500/30'}`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${ok ? 'bg-green-400' : 'bg-red-400'}`} />{children}
+        </span>
+    );
+}
 
 function SourceBadge({ field }) {
-    if (field.source === 'env') return <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-500/15 text-yellow-300 border border-yellow-500/30" title={`Overridden by process environment variable ${field.env_var}`}>env var</span>;
-    if (field.source === 'file') return <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-700 text-slate-300" title="Set in the env file">file</span>;
-    return <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-500" title="Built-in default (not in the env file)">default</span>;
+    // Only the case that changes behaviour is shown: a process env var overrides the env file.
+    if (field.source !== 'env') return null;
+    return <span className="shrink-0 whitespace-nowrap text-[10px] px-1.5 py-0.5 rounded bg-yellow-500/15 text-yellow-300 border border-yellow-500/30" title={`Overridden by process environment variable ${field.env_var}`}>env var</span>;
 }
 
 function Warnings({ items }) {
@@ -653,7 +477,7 @@ function ConfigField({ field, draftValue, onChange, onRevert, showSecret, toggle
     } else if (field.type === 'enum') {
         input = (
             <select value={dirty ? draftValue : (current ?? '')} disabled={disabled} onChange={e => onChange(e.target.value)} className={base}>
-                {(field.options || []).map(o => <option key={o} value={o}>{o}</option>)}
+                {(field.options || []).map((o, i) => <option key={o} value={o}>{field.optionLabels?.[i] ?? o}</option>)}
             </select>
         );
     } else if (field.type === 'int') {
@@ -667,12 +491,11 @@ function ConfigField({ field, draftValue, onChange, onRevert, showSecret, toggle
     }
     return (
         <div className={field.type === 'text' ? 'md:col-span-2' : ''}>
-            <div className="flex items-center justify-between mb-1">
-                <label className="text-sm font-bold text-slate-200 flex items-center gap-2">{field.label}<SourceBadge field={field} /></label>
-                <span className="flex items-center gap-2 text-[10px] font-mono text-slate-500">
-                    {field.key}
-                    {dirty && <button onClick={onRevert} className="text-cyan-400 hover:underline">revert</button>}
-                </span>
+            <div className="flex items-center justify-between gap-3 mb-1">
+                <label className="text-sm font-bold text-slate-200 flex items-center gap-2 min-w-0" title={field.key}>
+                    <span>{field.label}</span><SourceBadge field={field} />
+                </label>
+                {dirty && <button onClick={onRevert} className="shrink-0 text-[11px] text-cyan-400 hover:underline">revert</button>}
             </div>
             {field.description && <p className="text-[11px] text-slate-500 mb-1.5">{field.description}</p>}
             {input}

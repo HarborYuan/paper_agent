@@ -1,166 +1,57 @@
 import asyncio
 import json
 from datetime import datetime
+from typing import Dict, List
 
 from sqlmodel import Session, select
 from src.database import engine
 from src.config import settings
-from src.models import Paper, Author
+from src.models import Paper
 from src.services.arxiv import ArxivFetcher, ArxivAPIError
-from src.services.llm import LLMService
 from src.services.notifier import get_notifier, alert_arxiv_failure
 from src.services.paper_views import summary_tldr
-from src.services.pdf_service import pdf_service
 from src.services.settings_service import get_llm_config
 from src.services.usage_service import cost_since
-from src.services.report_service import run_scheduled_reports, report_to_lark, mark_pushed
 from src.services.embedding_service import embed_new_papers
-from src.utils import sanitize_text
 from src.logger import logger
 
-CONCURRENCY_LIMIT = 5
 PAPER_SYNC_LIMIT = 500
+VERDICT_LABEL = {"must_read": "Must Read", "worth_reading": "Worth Reading"}
 
 
-def _score_threshold() -> int:
-    return get_llm_config().score_threshold
-
-
-async def process_paper_score(sem: asyncio.Semaphore, llm: LLMService, paper: Paper):
+async def score_papers(papers: List[Paper], log=None) -> Dict[str, int]:
     """
-    Two-stage scoring:
-      stage 1 — cheap model, title+abstract, recall-oriented
-      stage 2 — stronger model, precision-oriented, agentic read (triage excerpt, then the
-                extended text if the reviewer asks for it);
-                runs only when stage-1 score >= stage2_threshold. Final score = stage 2 when it ran.
+    Verdict pipeline over NEW papers (screen -> review -> deep read, each stage one Batch API job), then
+    deep reads left over from earlier runs (status SCORED), within the per-run cap and the Claude budget.
     """
-    async with sem:
-        await logger.log(f"Scoring paper: {paper.id}")
+    from src.services import claude_budget, verdict_pipeline
+    from src.services.claude_runner import ClaudeRunner
+    log = log or logger.log
+    runner = ClaudeRunner()
+    with Session(engine) as session:
+        pending_deep = session.exec(select(Paper).where(Paper.status == "SCORED", Paper.user_score == None)).all()  # noqa: E711
+    stats = {"screened": 0, "reviewed": 0, "deep_read": 0}
+    if papers:
+        await log(f"Verdict pipeline on {len(papers)} papers...")
+        stats = await verdict_pipeline.run_pipeline(papers, runner, log=log)
+    if pending_deep:
+        cap = min(settings.DEEP_READ_MAX_PER_RUN - stats.get("deep_read", 0),
+                  claude_budget.affordable("deep", len(pending_deep)))
+        chosen = verdict_pipeline.select_for_deep(pending_deep, cap)
+        if chosen:
+            await log(f"Deep-reading {len(chosen)} of {len(pending_deep)} paper(s) left from earlier runs...")
+            done = await verdict_pipeline.deep_read(chosen, runner, log, final=True)
+            stats["deep_read"] = stats.get("deep_read", 0) + len(done)
+    return stats
 
-        # Check for user score first
-        if paper.user_score is not None:
-             await logger.log(f"  - Skipping AI scoring for {paper.id}, user score present: {paper.user_score}")
-             return
 
-        cfg = llm.config
-        details = {}
+def _verdict(p: Paper):
+    try:
+        r = json.loads(p.score_reason or "{}")
+        return (r.get("deep") or r.get("stage2") or {}).get("verdict") if isinstance(r, dict) else None
+    except json.JSONDecodeError:
+        return None
 
-        # ---- Stage 1
-        s1 = await llm.score_paper(paper, settings.USER_PROFILE)
-        if s1 is None:
-            await logger.log(f"  - Stage-1 scoring failed for {paper.id}; leaving as NEW")
-            return
-        final_score = s1.score
-        final_model = cfg.stage1_model
-        details["stage1"] = {"model": cfg.stage1_model, **s1.model_dump()}
-        await logger.log(f"  - Stage 1 ({cfg.stage1_model}): {s1.score}")
-
-        # ---- Stage 2 (conditional)
-        fetched_text = None
-        if s1.score >= cfg.stage2_threshold:
-            # Reuse cached full text if we already have it, else fetch the PDF now
-            # (the text is stored so summarization can reuse it later).
-            with Session(engine) as session:
-                db_paper = session.get(Paper, paper.id)
-                cached_text = db_paper.full_text if db_paper else None
-            text = cached_text
-            if not text and paper.pdf_url:
-                text = await pdf_service.extract_text_from_url(paper.pdf_url)
-                fetched_text = text
-            # Full text goes in; score_paper_stage2 decides how much of it to show
-            # (triage excerpt first, extended read only if the reviewer asks).
-            s2 = await llm.score_paper_stage2(paper, settings.USER_PROFILE, text)
-            if s2 is not None:
-                final_score = s2.score
-                final_model = cfg.stage2_model
-                details["stage2"] = {"model": cfg.stage2_model, "had_full_text": bool(text), **s2.model_dump()}
-                await logger.log(f"  - Stage 2 ({cfg.stage2_model}): {s2.score}")
-            else:
-                details["stage2"] = {"model": cfg.stage2_model, "error": "stage-2 scoring failed; kept stage-1 score"}
-                await logger.log(f"  - Stage 2 failed for {paper.id}; keeping stage-1 score {s1.score}")
-
-        # ---- Important-author boost
-        is_important_author = False
-        try:
-            with Session(engine) as session:
-                authors = paper.authors_list
-                if authors:
-                    statement = select(Author).where(
-                        Author.name.in_(authors),
-                        Author.is_important == True
-                    )
-                    important_authors = session.exec(statement).all()
-                    if important_authors:
-                        is_important_author = True
-                        await logger.log(f"  - Found important author(s): {[a.name for a in important_authors]}")
-        except Exception as e:
-            await logger.log(f"  - Error checking important authors: {e}")
-
-        if is_important_author and final_score < 90:
-            await logger.log(f"  - Boosting score from {final_score} to 90 due to important author.")
-            details["boost"] = {"reason": "important_author", "from": final_score, "to": 90}
-            final_score = 90
-
-        details["final"] = final_score
-        threshold = cfg.score_threshold
-
-        with Session(engine) as session:
-            db_paper = session.get(Paper, paper.id)
-            if db_paper:
-                db_paper.score = final_score
-                db_paper.score_stage1 = s1.score
-                db_paper.score_model = final_model
-                db_paper.score_reason = sanitize_text(json.dumps(details, ensure_ascii=False))
-                if fetched_text and not db_paper.full_text:
-                    db_paper.full_text = sanitize_text(fetched_text)
-                db_paper.status = "FILTERED" if final_score < threshold else "SCORED"
-                db_paper.updated_at = datetime.now()
-                session.add(db_paper)
-                session.commit()
-
-async def process_paper_summary(sem: asyncio.Semaphore, llm: LLMService, paper: Paper):
-    async with sem:
-        await logger.log(f"Summarizing paper: {paper.id}")
-
-        # Reuse full text cached by stage-2 scoring if present; otherwise fetch the PDF.
-        with Session(engine) as session:
-            db_paper = session.get(Paper, paper.id)
-            full_text = db_paper.full_text if db_paper else None
-        if not full_text and paper.pdf_url:
-            full_text = await pdf_service.extract_text_from_url(paper.pdf_url)
-
-        aff_data = None
-        if full_text:
-            await logger.log(f"  - Using full text for {paper.id} ({len(full_text)} chars)")
-            # Extract affiliations
-            aff_data = await llm.extract_affiliations(paper, full_text)
-            if aff_data:
-                await logger.log(f"  - Affiliations: {aff_data.main_affiliation}")
-            # Summarize with full text
-            summary = await llm.summarize_paper(paper, full_text=full_text, user_profile=settings.USER_PROFILE)
-        else:
-            await logger.log(f"  - Full text not available for {paper.id}")
-            summary = await llm.summarize_paper(paper, user_profile=settings.USER_PROFILE)
-
-        with Session(engine) as session:
-            db_paper = session.get(Paper, paper.id)
-            if db_paper:
-                if full_text:
-                    db_paper.full_text = sanitize_text(full_text)
-
-                if aff_data:
-                    db_paper.affiliations = sanitize_text(json.dumps(aff_data.affiliations))
-                    db_paper.main_company = sanitize_text(aff_data.main_company)
-                    db_paper.main_university = sanitize_text(aff_data.main_university)
-                    db_paper.main_affiliation = sanitize_text(aff_data.main_affiliation)
-
-                if summary:
-                    db_paper.summary_personalized = sanitize_text(summary)
-                    db_paper.status = "SUMMARIZED"
-
-                db_paper.updated_at = datetime.now()
-                session.add(db_paper)
-                session.commit()
 
 async def run_worker():
     await logger.log("Starting worker cycle...")
@@ -168,7 +59,6 @@ async def run_worker():
 
     # 1. Fetch
     fetcher = ArxivFetcher(categories=settings.ARXIV_CATEGORIES)
-    # 2000 for MVP; usually good enough
     fetch_error = None
     try:
         fetched_papers = await asyncio.to_thread(fetcher.fetch_papers, max_results=PAPER_SYNC_LIMIT)
@@ -182,13 +72,22 @@ async def run_worker():
     new_papers = fetcher.filter_new_papers(fetched_papers)
     fetcher.save_papers(new_papers)
 
-    # 1b. Embed the new papers (semantic search / related / clustering). Non-fatal.
-    if new_papers:
+    # 1b. Embed every paper still without a vector: today's papers plus anything added by hand, bulk inserts
+    # or an earlier failed call — no manual backfill needed. Non-fatal.
+    try:
+        n = await embed_new_papers(limit=settings.EMBED_CATCHUP_PER_RUN, log=logger.log)
+        if n:
+            await logger.log(f"Embedded {n} paper(s).")
+    except Exception as e:
+        await logger.log(f"Embedding skipped: {e}")
+
+    # 1c. Hot lane: refresh Hugging Face popularity; hot papers missing from the library are added as NEW.
+    if settings.HOT_ENABLED:
         try:
-            n = await embed_new_papers([p.id for p in new_papers], log=logger.log)
-            await logger.log(f"Embedded {n} new paper(s).")
+            from src.services import hot_service
+            await hot_service.refresh(log=logger.log)
         except Exception as e:
-            await logger.log(f"Embedding skipped: {e}")
+            await logger.log(f"Hot lane refresh skipped: {e}")
 
     notifier = get_notifier()
 
@@ -198,72 +97,42 @@ async def run_worker():
     with Session(engine) as session:
         pending_new = session.exec(select(Paper.id).where(Paper.status == "NEW")).first()
 
-    # Nothing new and nothing pending — send rest-day notification (plus any weekly/monthly report that is due) and stop early
+    # Nothing new and nothing pending — send rest-day notification and stop early
     if not new_papers and not pending_new:
         await logger.log("No new papers retrieved.")
-        reports = await run_scheduled_reports(run_started_at.date(), None, log=logger.log)
         if notifier:
             if not fetch_error:  # the outage alert already went out; "taking a break" would be misleading
                 await notifier.send_message(
                     "😴 No new papers retrieved today. Taking a break!"
                 )
-            if reports and await notifier.send_messages([report_to_lark(r) for r in reports]):
-                for r in reports:
-                    mark_pushed(r.id)
         else:
             await logger.log("No notifier configured.")
         return
 
-    llm = LLMService()
-    cfg = llm.config
-    sem = asyncio.Semaphore(CONCURRENCY_LIMIT)
-    await logger.log(
-        f"Models — stage1: {cfg.stage1_model} | stage2: {cfg.stage2_model} (>= {cfg.stage2_threshold}) | "
-        f"summary: {cfg.summary_model} (>= {cfg.score_threshold})"
-    )
+    cfg = get_llm_config()
+    await logger.log(f"Models — screen: {cfg.stage1_model} | review: {cfg.stage2_model} | deep read: {cfg.summary_model}")
 
     # 2. Score NEW papers
     with Session(engine) as session:
-        statement = select(Paper).where(Paper.status == "NEW")
-        papers_to_score = session.exec(statement).all()
-
+        papers_to_score = session.exec(select(Paper).where(Paper.status == "NEW")).all()
     scored_count = len(papers_to_score)
+    stats = {"reviewed": 0, "deep_read": 0}
+    if not settings.chat_api_key:
+        await logger.log(f"{settings.chat_key_name} is not configured — scoring skipped; papers stay NEW.")
+        if notifier:
+            await notifier.send_message(f"⚠️ Paper Agent: {settings.chat_key_name} is not configured, so today's papers were not scored. Set it on the Settings page.")
+    else:
+        stats = await score_papers(papers_to_score)
     above_threshold_count = 0
-    stage2_count = 0
-
     if papers_to_score:
-        await logger.log(f"Scoring {len(papers_to_score)} papers...")
-        await asyncio.gather(*[process_paper_score(sem, llm, p) for p in papers_to_score])
-
-        # Count how many of the just-scored papers cleared the thresholds
-        scored_ids = [p.id for p in papers_to_score]
         with Session(engine) as session:
             above_threshold_count = len(session.exec(select(Paper).where(
-                Paper.id.in_(scored_ids),
-                Paper.score >= cfg.score_threshold,
-            )).all())
-            stage2_count = len(session.exec(select(Paper).where(
-                Paper.id.in_(scored_ids),
-                Paper.score_stage1 >= cfg.stage2_threshold,
-            )).all())
-
-    # 3. Summarize SCORED papers (High score)
-    with Session(engine) as session:
-        statement = select(Paper).where(Paper.status == "SCORED") # Filtering handled in scoring step
-        papers_to_summarize = session.exec(statement).all()
-
-    if papers_to_summarize:
-        await logger.log(f"Summarizing {len(papers_to_summarize)} papers...")
-        await asyncio.gather(*[process_paper_summary(sem, llm, p) for p in papers_to_summarize])
+                Paper.id.in_([p.id for p in papers_to_score]), Paper.score >= cfg.score_threshold)).all())
 
     # 4. Notify
     with Session(engine) as session:
         statement = select(Paper).where(Paper.status == "SUMMARIZED")
         papers_to_notify = session.exec(statement).all()
-
-    # 4b. Reports (daily for this run's pushed papers; weekly / monthly when due).
-    # Generated before sending so they go out in the same batch, right after the digest.
-    reports = await run_scheduled_reports(run_started_at.date(), [p.id for p in papers_to_notify], llm=llm, log=logger.log)
 
     if not notifier:
         await logger.log("No notifier configured.")
@@ -271,13 +140,18 @@ async def run_worker():
 
     # Always emit a summary header about today's scoring activity
     run_cost = cost_since(run_started_at)
+    from src.services import claude_budget
+    b = claude_budget.status()
+    budget_line = f"   • Claude budget: ${b['spent']:.2f} / ${b['budget']:.0f} this cycle\n"
     cost_line = f"   • LLM cost this run: ${run_cost:.3f}\n" if run_cost is not None else ""
     summary_msg = (
         f"📊 Today's scoring\n"
         f"   • Scored: {scored_count} paper(s)\n"
-        f"   • Stage-2 reviewed (≥{cfg.stage2_threshold}): {stage2_count}\n"
-        f"   • Above threshold (≥{cfg.score_threshold}): {above_threshold_count}\n"
+        f"   • Reviewed (relevance ≥ {settings.SCREEN_MIN_RELEVANCE}): {stats.get('reviewed', 0)}\n"
+        f"   • Deep read: {stats.get('deep_read', 0)}\n"
+        f"   • Must Read / Worth Reading: {above_threshold_count}\n"
         f"{cost_line}"
+        f"{budget_line}"
     )
     messages = [summary_msg]
 
@@ -304,18 +178,42 @@ async def run_worker():
                     if len(authors) > 3:
                         author_str += f" +{len(authors) - 3} more"
                     digest += f"   👥 {author_str}\n"
-                digest += f"   ⭐ Score: {p.score}{aff}\n"
+                label = VERDICT_LABEL.get(_verdict(p))
+                digest += (f"   ⭐ {label} ({p.score}){aff}\n" if label else f"   ⭐ Score: {p.score}{aff}\n")
+                from src.services import project_service
+                projs = project_service.projects_of(p.id)
+                if projs:
+                    digest += f"   📁 {', '.join(projs)}\n"
+                if settings.PUBLIC_BASE_URL:
+                    digest += f"   📖 {settings.PUBLIC_BASE_URL.rstrip('/')}/read/{p.id}\n"
                 digest += f"   🔗 {p.pdf_url}\n"
                 if p.summary_personalized:
                     digest += f"   💡 {summary_tldr(p.summary_personalized, 150)}\n"
                 digest += "\n"
             messages.append(digest)
 
-    # Reports go right after the digest, each as its own card with its own title
-    for r in reports:
-        messages.append(report_to_lark(r))
+    # Hot section: popular papers, relevant or not, each pushed once
+    hot_ids = []
+    if settings.HOT_ENABLED:
+        try:
+            from src.services import hot_service
+            sigs = hot_service.pending()
+            if sigs:
+                with Session(engine) as session:
+                    hot_papers = {p.id: p for p in session.exec(select(Paper).where(
+                        Paper.id.in_([x.paper_id for x in sigs]))).all()}
+                talk = await hot_service.chatter(list(hot_papers.values()), log=logger.log)
+                hot_msg = hot_service.section(sigs, hot_papers, talk)
+                if hot_msg:
+                    messages.append(hot_msg)
+                    hot_ids = list(hot_papers)
+        except Exception as e:
+            await logger.log(f"Hot section skipped: {e}")
 
     success = await notifier.send_messages(messages)
+    if success and hot_ids:
+        from src.services import hot_service
+        hot_service.mark_pushed(hot_ids)
 
     if success and papers_to_notify:
         with Session(engine) as session:
@@ -324,72 +222,50 @@ async def run_worker():
                 db_p.status = "PUSHED"
                 session.add(db_p)
             session.commit()
-    if success:
-        for r in reports:
-            mark_pushed(r.id)
 
 
 async def process_single_paper(paper_id: str, force_rescore: bool = False, notify: bool = True):
     """
-    Process a single paper: score -> (if good) summarize -> notify (if configured)
-
-    With notify=False the paper is left in SUMMARIZED, so the next scheduled
-    run picks it up in the batched digest instead of an individual message.
+    One paper in real time: screen -> review -> deep read (when it is worth reading) -> notify.
+    With notify=False the paper is left in SUMMARIZED, so the next scheduled run picks it up
+    in the batched digest instead of an individual message.
     """
+    from src.services import verdict_pipeline
+    from src.services.claude_runner import ClaudeRunner
     await logger.log(f"Processing single paper: {paper_id} (force_rescore={force_rescore}, notify={notify})")
-
-    # Check if paper exists
     with Session(engine) as session:
         paper = session.get(Paper, paper_id)
-
     if not paper:
         await logger.log(f"Paper {paper_id} not found in DB.")
         return
-
-    llm = LLMService()
-    threshold = llm.config.score_threshold
-    sem = asyncio.Semaphore(1) # processed singly, so limit doesn't matter much
-
-    # 1. Score
-    if force_rescore or paper.status == "NEW" or paper.status == "FILTERED":
-        await process_paper_score(sem, llm, paper)
-
-    # Reload to check score
+    if not settings.chat_api_key:
+        await logger.log(f"{settings.chat_key_name} is not configured — cannot score.")
+        return
+    try:  # vector first: semantic search and project recall need it
+        await embed_new_papers([paper_id])
+    except Exception as e:
+        await logger.log(f"Embedding of {paper_id} skipped: {e}")
+    runner = ClaudeRunner(use_batch=False)
+    if force_rescore or paper.status in ("NEW", "FILTERED"):
+        await verdict_pipeline.run_pipeline([paper], runner, log=logger.log)
     with Session(engine) as session:
         paper = session.get(Paper, paper_id)
+    if paper and paper.status == "SCORED":  # reviewed as worth reading, deep read still missing
+        await verdict_pipeline.deep_read([paper], runner, logger.log, final=True)
+        with Session(engine) as session:
+            paper = session.get(Paper, paper_id)
+    if not paper:
+        return
 
-    if not paper: return
-
-    # 2. Summarize (reuse an existing summary instead of regenerating it)
-    if paper.score and paper.score >= threshold and paper.summary_personalized:
-        if paper.status == "SCORED":
-            with Session(engine) as session:
-                db_p = session.get(Paper, paper_id)
-                if db_p:
-                    db_p.status = "SUMMARIZED"
-                    session.add(db_p)
-                    session.commit()
-    elif paper.status == "SCORED" or (paper.score and paper.score >= threshold):
-        await process_paper_summary(sem, llm, paper)
-
-    # Reload
-    with Session(engine) as session:
-        paper = session.get(Paper, paper_id)
-
-    if not paper: return
-
-    # 3. Notify
     if notify and paper.status == "SUMMARIZED":
         notifier = get_notifier()
         if notifier:
-            digest = f"*New Paper Added:*\n\n"
-            digest += f"📄 *{paper.title}* (Score: {paper.score})\n"
-            digest += f"[PDF]({paper.pdf_url})\n"
+            label = VERDICT_LABEL.get(_verdict(paper), f"Score {paper.score}")
+            digest = f"*New Paper Added:*\n\n📄 *{paper.title}* ({label})\n[PDF]({paper.pdf_url})\n"
+            if settings.PUBLIC_BASE_URL:
+                digest += f"📖 {settings.PUBLIC_BASE_URL.rstrip('/')}/read/{paper.id}\n"
             digest += f"tl;dr: {summary_tldr(paper.summary_personalized, 200)}\n\n"
-
-            success = await notifier.send_message(digest)
-
-            if success:
+            if await notifier.send_message(digest):
                 with Session(engine) as session:
                     db_p = session.get(Paper, paper.id)
                     db_p.status = "PUSHED"
@@ -398,38 +274,10 @@ async def process_single_paper(paper_id: str, force_rescore: bool = False, notif
 
 
 async def resummarize_single_paper(paper_id: str):
-    """
-    Force re-summarize a single paper regardless of its current status.
-    Always re-runs scoring and summarization, skipping notification.
-    """
-    await logger.log(f"Force re-summarizing paper: {paper_id}")
-
-    with Session(engine) as session:
-        paper = session.get(Paper, paper_id)
-
-    if not paper:
-        await logger.log(f"Paper {paper_id} not found in DB.")
-        return
-
-    llm = LLMService()
-    sem = asyncio.Semaphore(1)
-
-    # 1. Re-score
-    if paper.user_score is None:
-        await process_paper_score(sem, llm, paper)
-    else:
-        await logger.log(f"  - Skipping re-scoring for {paper.id}, user score present: {paper.user_score}")
-
-    # Reload after scoring
-    with Session(engine) as session:
-        paper = session.get(Paper, paper_id)
-    if not paper:
-        return
-
-    # 2. Always summarize (regardless of score)
-    await process_paper_summary(sem, llm, paper)
-
-    await logger.log(f"Finished re-summarizing paper: {paper_id}")
+    """Redo the deep read of one paper (reviewing it first if needed); no notification, status unchanged."""
+    from src.services import verdict_pipeline
+    await logger.log(f"Re-running the deep read of {paper_id}")
+    await verdict_pipeline.deep_read_on_demand(paper_id, log=logger.log)
 
 
 if __name__ == "__main__":

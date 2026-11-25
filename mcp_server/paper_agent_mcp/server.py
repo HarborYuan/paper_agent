@@ -3,7 +3,7 @@ Paper Agent MCP server (stdio).
 
 Thin, explicit tools over the Paper Agent HTTP API so an LLM agent (Claude Code, etc.) can:
 search papers semantically or by title, pull recent high-scoring papers, follow people of interest,
-read a paper's summary / full text, browse trend reports, and write feedback back (user scores,
+read a paper's verdict / TL;DR / full text and bilingual deep read, manage projects, and write feedback back (user scores,
 important people). Every tool returns compact JSON-serialisable data.
 
 Run:  paper-agent-mcp --base-url http://nas:8000      (or env PAPER_AGENT_URL)
@@ -29,11 +29,13 @@ mcp = FastMCP(
     "paper-agent",
     instructions=(
         "Tools for the user's personal arXiv Paper Agent (scores every new cs.CV/cs.CL/cs.AI paper against "
-        "their research profile, summarises the best ones, writes daily/weekly/monthly trend reports). "
+        "their research profile: a screen, a review and, for the papers worth reading, a full deep read with a "
+        "bilingual reading page; it also collects papers into the user's projects). "
         "Use search_papers for topic questions (semantic, any language; optionally seed with paper ids), "
         "recent_papers for 'what came out lately', papers_by_people for people of interest, get_paper to read "
-        "one paper in depth (summary, scoring rationale, optional full text), related_papers for neighbours, "
-        "list_reports/get_report for trend reports. set_user_score and mark_people_important write the user's "
+        "one paper in depth (verdict, TL;DR, optional full text), related_papers for neighbours, "
+        "deep_read_paper / get_deep_read for the paragraph-by-paragraph reading with flagged claims, "
+        "list_projects / get_project / create_project / add_papers_to_project for projects. set_user_score and mark_people_important write the user's "
         "feedback back so future scoring improves. BibTeX: get_bibtex returns citation entries for any arXiv id; "
         "the server never looks up venues itself — for entries in `needs_check` YOU verify whether the paper was "
         "accepted (bibtex_venue_hints, then web sources if needed) and write the verdict back with set_bibtex_status, "
@@ -80,6 +82,13 @@ def _put(path: str, body: Optional[Dict[str, Any]] = None) -> Any:
         r = c.put(path, json=body)
         _raise_for(r)
         return r.json()
+
+
+def _delete(path: str) -> Any:
+    with _client() as c:
+        r = c.delete(path)
+    _raise_for(r)
+    return r.json()
 
 
 def _patch(path: str, body: Optional[Dict[str, Any]] = None, **params: Any) -> Any:
@@ -146,9 +155,10 @@ def related_papers(paper_id: str, k: int = 8) -> Dict[str, Any]:
 @mcp.tool()
 def get_paper(paper_id: str, include_text: bool = False, max_text_chars: int = 20000) -> Dict[str, Any]:
     """
-    Full record of one paper: metadata, final/stage scores and the two-stage scoring rationale (`score_reason`,
-    JSON string), the personalised markdown summary (`summary_personalized`), affiliations. With
-    `include_text=true` also the extracted PDF text (`full_text`, truncated to `max_text_chars`).
+    Full record of one paper: metadata, final score, the pipeline rationale (`score_reason`, JSON string with
+    `stage1` = screen relevance, `stage2` = review verdict and dimensions, `deep` = final verdict after the full
+    read), the TL;DR (`summary_personalized`), affiliations. With `include_text=true` also the extracted PDF text
+    (`full_text`, truncated to `max_text_chars`). The bilingual reading page is at /read/<id> (see get_deep_read).
     """
     d = _get(f"/api/papers/{paper_id}")
     text = d.pop("full_text", None)
@@ -160,6 +170,94 @@ def get_paper(paper_id: str, include_text: bool = False, max_text_chars: int = 2
         d["has_full_text"] = bool(text)
     d["abs_url"] = f"https://arxiv.org/abs/{paper_id}"
     return d
+
+
+@mcp.tool()
+def deep_read_paper(paper_id: str, force: bool = False) -> Dict[str, Any]:
+    """
+    Start a deep read of one paper (Claude, real time, ~1-2 minutes, ~$0.1-0.2): reviews it if needed, then
+    writes the final verdict (must_read / worth_reading / skim / skip), the structured summary, a
+    paragraph-by-paragraph Chinese gist with questionable / big claims flagged, and a full Chinese translation.
+    Returns the status and `read_url` (the bilingual reading page). Already done -> returns DONE unless force=true.
+    Check progress with get_deep_read.
+    """
+    d = _post(f"/api/papers/{paper_id}/deep-read", force=force)
+    d["read_url"] = _base_url + d.get("read_url", f"/read/{paper_id}")
+    return d
+
+
+@mcp.tool()
+def get_deep_read(paper_id: str, include_notes: bool = False) -> Dict[str, Any]:
+    """
+    Deep-read status of a paper (NONE / PENDING / RUNNING / DONE / ERROR), the final verdict with its
+    dimensions, and the verified claim flags (questionable / big_claim with the quoted span and why).
+    With include_notes=true also the per-paragraph Chinese gist notes (no translations — open read_url for those).
+    """
+    d = _get(f"/api/papers/{paper_id}/reading", full=include_notes)
+    if include_notes:
+        d.pop("units", None)
+        d.pop("translations", None)
+        d["flags"] = [f for n in d.get("notes", []) for f in n.get("flags", []) if f.get("verified")]
+    d["read_url"] = _base_url + d.get("read_url", f"/read/{paper_id}")
+    return d
+
+
+# ---------------------------------------------------------------------------
+# Tools — projects
+# ---------------------------------------------------------------------------
+@mcp.tool()
+def list_projects() -> List[Dict[str, Any]]:
+    """The user's research projects (id, name, description, keywords, active, n_papers). Each project collects papers;
+    new papers are recalled for active projects every night and confirmed by the reviewer."""
+    return _get("/api/projects")
+
+
+@mcp.tool()
+def get_project(project: str, limit: int = 50) -> Dict[str, Any]:
+    """One project (by name or id) with its papers, newest first. Each paper has project_source
+    (seed / manual / auto = recalled and confirmed by the reviewer) and project_reason."""
+    return _get(f"/api/projects/{project}", limit=limit)
+
+
+@mcp.tool()
+def create_project(name: str, description: str, keywords: Optional[List[str]] = None,
+                   seed_paper_ids: Optional[List[str]] = None) -> Dict[str, Any]:
+    """
+    Create a project. The description (what the project does, its method and what kind of paper it needs) and the
+    seed papers (arXiv ids already in the library; add missing ones with add_paper first) drive recall, so write the
+    description concretely. Returns the project.
+    """
+    return _post("/api/projects", {"name": name, "description": description, "keywords": keywords or [],
+                                   "seed_paper_ids": seed_paper_ids or []})
+
+
+@mcp.tool()
+def update_project(project: str, name: Optional[str] = None, description: Optional[str] = None,
+                   keywords: Optional[List[str]] = None, active: Optional[bool] = None) -> Dict[str, Any]:
+    """Edit a project (by name or id). active=false stops nightly recall for it but keeps its papers."""
+    body = {"name": name, "description": description, "keywords": keywords, "active": active}
+    return _patch(f"/api/projects/{project}", {k: v for k, v in body.items() if v is not None})
+
+
+@mcp.tool()
+def add_papers_to_project(project: str, paper_ids: List[str], as_seed: bool = False) -> Dict[str, Any]:
+    """Add papers to a project (manual, or as seeds that anchor recall). Reports ids not in the library."""
+    return _post(f"/api/projects/{project}/papers", {"paper_ids": paper_ids, "source": "seed" if as_seed else "manual"})
+
+
+@mcp.tool()
+def remove_papers_from_project(project: str, paper_ids: List[str]) -> Dict[str, Any]:
+    """Remove papers from a project."""
+    removed = []
+    for pid in paper_ids:
+        removed += _delete(f"/api/projects/{project}/papers/{pid}").get("removed", [])
+    return {"removed": removed}
+
+
+@mcp.tool()
+def project_suggestions(project: str, k: int = 20) -> List[Dict[str, Any]]:
+    """Library papers most similar to a project (seed papers + description) that are not in it yet — for backfilling."""
+    return _get(f"/api/projects/{project}/suggestions", k=k)
 
 
 @mcp.tool()
@@ -208,34 +306,6 @@ def mark_people_important(names: List[str], important: bool = True) -> Dict[str,
 
 
 # ---------------------------------------------------------------------------
-# Tools — reports
-# ---------------------------------------------------------------------------
-@mcp.tool()
-def list_reports(kind: Optional[str] = None, limit: int = 10, with_content: bool = False) -> List[Dict[str, Any]]:
-    """
-    Trend reports, newest first. `kind`: daily | weekly | monthly | null. Without `with_content` each item has
-    title, period, paper_count, model, pushed and a 300-char preview — use get_report(id) for the full markdown.
-    """
-    items = _get("/api/reports", kind=kind, limit=limit)
-    out = []
-    for r in items:
-        d = {k: r.get(k) for k in ("id", "kind", "period_label", "title", "paper_count", "model", "pushed", "created_at")}
-        if with_content:
-            d["content"] = r.get("content")
-        else:
-            c = (r.get("content") or "")
-            d["preview"] = c[:300] + ("…" if len(c) > 300 else "")
-        out.append(d)
-    return out
-
-
-@mcp.tool()
-def get_report(report_id: int) -> Dict[str, Any]:
-    """One trend report: markdown `content`, computed `stats` (JSON string: counts, institutions with deltas, clusters…), covered `paper_ids`."""
-    return _get(f"/api/reports/{report_id}")
-
-
-# ---------------------------------------------------------------------------
 # Tools — feedback / write-back
 # ---------------------------------------------------------------------------
 @mcp.tool()
@@ -252,20 +322,22 @@ def set_user_score(paper_id: str, score: int) -> Dict[str, Any]:
 @mcp.tool()
 def add_paper(arxiv_id_or_url: str) -> Dict[str, Any]:
     """
-    Add a paper by arXiv id or URL. It is fetched from arXiv, then scored (two-stage) and summarised in the
-    background; poll get_paper a minute later. If it already exists, re-processing is triggered only when needed.
+    Add a paper by arXiv id or URL. It is fetched from arXiv, then screened, reviewed and (if worth reading)
+    deep-read in the background; poll get_paper a minute or two later. If it already exists, re-processing is
+    triggered only when needed.
     """
     return _post("/api/papers/add", {"input": arxiv_id_or_url})
 
 
 @mcp.tool()
 def agent_status() -> Dict[str, Any]:
-    """Health of the Paper Agent instance: models/thresholds in use, embedding coverage, base URL."""
+    """Health of the Paper Agent instance: Claude models and gates in use, Claude budget, embedding coverage, base URL."""
     llm = _get("/api/settings/llm")
     emb = _get("/api/embeddings/status")
     return {
         "base_url": _base_url,
-        "models": llm.get("models"), "thresholds": llm.get("thresholds"), "provider": llm.get("provider"),
+        "models": llm.get("models"), "gates": llm.get("gates"), "provider": llm.get("provider"),
+        "warnings": llm.get("warnings"), "claude_budget": _get("/api/claude/budget"),
         "embeddings": {k: emb.get(k) for k in ("model", "dim", "total_papers", "embedded", "missing", "index_size")},
     }
 
