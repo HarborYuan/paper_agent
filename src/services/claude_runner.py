@@ -167,6 +167,8 @@ LogFn = Optional[Callable[[str], Awaitable[None]]]
 
 
 class ClaudeRunner:
+    MAX_POLL_ERRORS = 40   # consecutive failed status checks (~20 min at the default poll) before giving up
+
     def __init__(self, api_key: Optional[str] = None, use_batch: Optional[bool] = None,
                  max_wait_minutes: Optional[int] = None, poll_seconds: float = 30.0,
                  concurrency: int = 6, client: Any = None):
@@ -213,8 +215,20 @@ class ClaudeRunner:
             requests=[{"custom_id": cid, "params": r.params()} for cid, r in by_cid.items()])
         await self._log(log, f"  - Submitted batch {batch.id} ({len(reqs)} requests, {reqs[0].task if reqs else ''})")
         t0 = time.monotonic()
+        errors = 0
         while True:
-            batch = await self.client.messages.batches.retrieve(batch.id)
+            try:
+                batch = await self.client.messages.batches.retrieve(batch.id)
+                errors = 0
+            except Exception as e:
+                # A network blip must not drop a submitted (and billed) batch for a real-time re-run.
+                errors += 1
+                if errors == 1:
+                    await self._log(log, f"  - Batch {batch.id}: status check failed ({type(e).__name__}: {e}); retrying")
+                if errors >= self.MAX_POLL_ERRORS:
+                    raise
+                await asyncio.sleep(self.poll_seconds)
+                continue
             if batch.processing_status == "ended":
                 break
             if time.monotonic() - t0 > self.max_wait:
@@ -234,17 +248,23 @@ class ClaudeRunner:
 
         out: Dict[str, ClaudeResult] = {}
         if batch.processing_status == "ended":
-            results = await self.client.messages.batches.results(batch.id)
-            async for entry in results:
-                req = by_cid.get(entry.custom_id)
-                if req is None:
-                    continue
-                if entry.result.type == "succeeded":
-                    res = _parse_message(req, entry.result.message, batch=True)
-                else:
-                    res = ClaudeResult(key=req.key, error=f"batch {entry.result.type}", batch=True)
-                _record(req, res, None)
-                out[req.key] = res
+            for attempt in range(3):
+                try:
+                    results = await self.client.messages.batches.results(batch.id)
+                    async for entry in results:
+                        req = by_cid.get(entry.custom_id)
+                        if req is None or req.key in out:
+                            continue
+                        if entry.result.type == "succeeded":
+                            res = _parse_message(req, entry.result.message, batch=True)
+                        else:
+                            res = ClaudeResult(key=req.key, error=f"batch {entry.result.type}", batch=True)
+                        _record(req, res, None)
+                        out[req.key] = res
+                    break
+                except Exception as e:  # results stream cut off: read it again, keeping what arrived
+                    await self._log(log, f"  - Batch {batch.id}: reading results failed ({type(e).__name__}: {e})")
+                    await asyncio.sleep(min(self.poll_seconds, 15) * (attempt + 1))
         # retry anything missing or failed (except refusals) once in real time
         retry = [r for r in reqs if r.key not in out or (out[r.key].error and out[r.key].error != "refusal")]
         if retry:

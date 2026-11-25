@@ -14,6 +14,7 @@ import AuthorDetail from './pages/AuthorDetail';
 import SettingsPage from './pages/Settings';
 import Projects from './pages/Projects';
 import LogViewer from './components/LogViewer';
+import PipelineBacklog from './components/PipelineBacklog';
 
 const API_URL = '/api'; // All backend endpoints live under /api (same origin)
 
@@ -421,6 +422,8 @@ function AppContent() {
           </div>
         </div>
       </header>
+
+      {searchQuery.trim() === "" && <PipelineBacklog />}
 
       {/* Add Paper Modal */}
       {

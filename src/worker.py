@@ -1,7 +1,7 @@
 import asyncio
 import json
 from datetime import datetime
-from typing import Dict, List
+from typing import Dict, List, Optional, Tuple
 
 from sqlmodel import Session, select
 from src.database import engine
@@ -18,6 +18,7 @@ from src.logger import logger
 # Upper bound on the paged daily fetch; it normally stops after 2-3 pages, at papers already in the library
 PAPER_SYNC_LIMIT = 2000
 VERDICT_LABEL = {"must_read": "Must Read", "worth_reading": "Worth Reading"}
+MAX_PAPERS_PER_MESSAGE = 10   # Lark rejects large posts
 
 
 async def score_papers(papers: List[Paper], log=None) -> Dict[str, int]:
@@ -55,6 +56,117 @@ def _verdict(p: Paper):
 
 
 async def run_worker():
+    """The nightly cycle. One run at a time (shared with backfills); any crash is pushed to Lark."""
+    from src.services import verdict_pipeline
+    if verdict_pipeline.RUN_LOCK.locked():
+        await logger.log("Another run or a backfill is in progress; this run starts when it finishes.")
+    async with verdict_pipeline.RUN_LOCK:
+        try:
+            await _run_cycle()
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            await logger.log(f"Worker cycle failed: {type(e).__name__}: {e}")
+            notifier = get_notifier()
+            if notifier:
+                await notifier.send_message(
+                    f"The run stopped with an error: {type(e).__name__}: {e}\n"
+                    f"Papers it did not finish stay queued and are picked up by the next run.",
+                    title="⚠️ Paper Agent run failed")
+
+
+def _has_pending_work() -> bool:
+    with Session(engine) as session:
+        return session.exec(select(Paper.id).where(Paper.status.in_(["NEW", "SCORED", "SUMMARIZED"]))).first() is not None
+
+
+def _digest_chunks(papers: List[Paper]) -> List[Tuple[str, List[str]]]:
+    """Digest messages grouped by published date, newest first, at most MAX_PAPERS_PER_MESSAGE papers each
+    (Lark rejects large posts). Returns (text, paper ids) so each chunk is marked PUSHED on its own."""
+    from collections import defaultdict
+    from src.services import project_service
+    by_date = defaultdict(list)
+    for p in papers:
+        by_date[p.published_at.strftime("%Y-%m-%d")].append(p)
+    out = []
+    for date_key in sorted(by_date, reverse=True):
+        date_papers = sorted(by_date[date_key], key=lambda x: x.score or 0, reverse=True)
+        chunks = [date_papers[i:i + MAX_PAPERS_PER_MESSAGE] for i in range(0, len(date_papers), MAX_PAPERS_PER_MESSAGE)]
+        for ci, chunk in enumerate(chunks):
+            part = f", part {ci + 1}/{len(chunks)}" if len(chunks) > 1 else ""
+            digest = f"📅 {date_key}  ({len(date_papers)} papers{part})\n" + "─" * 30 + "\n\n"
+            for i, p in enumerate(chunk, 1 + ci * MAX_PAPERS_PER_MESSAGE):
+                aff = f" | {p.main_affiliation}" if p.main_affiliation else ""
+                digest += f"{i}. {p.title}\n"
+                authors = p.authors_list
+                if authors:
+                    author_str = ", ".join(authors[:3])
+                    if len(authors) > 3:
+                        author_str += f" +{len(authors) - 3} more"
+                    digest += f"   👥 {author_str}\n"
+                label = VERDICT_LABEL.get(_verdict(p))
+                digest += (f"   ⭐ {label} ({p.score}){aff}\n" if label else f"   ⭐ Score: {p.score}{aff}\n")
+                projs = project_service.projects_of(p.id)
+                if projs:
+                    digest += f"   📁 {', '.join(projs)}\n"
+                if settings.PUBLIC_BASE_URL:
+                    digest += f"   📖 {settings.PUBLIC_BASE_URL.rstrip('/')}/read/{p.id}\n"
+                digest += f"   🔗 {p.pdf_url}\n"
+                if p.summary_personalized:
+                    digest += f"   💡 {summary_tldr(p.summary_personalized, 150)}\n"
+                digest += "\n"
+            out.append((digest, [p.id for p in chunk]))
+    return out
+
+
+def backlog_section(bl: dict, since: Optional[datetime] = None) -> Optional[str]:
+    """
+    The digest's "still to do" message: failed deep reads that the next run retries, the ones given up
+    on (newly given up since `since` listed, older ones counted), and counts of papers waiting for a
+    deep-read slot, a review or a screen. None when there is nothing to report.
+    """
+    from src.services.verdict_pipeline import DEEP_MAX_FAILURES
+    base = (settings.PUBLIC_BASE_URL or "").rstrip("/")
+
+    def row(x):
+        label = VERDICT_LABEL.get(x.get("verdict") or "", "")
+        line = f"  • {x['title']}" + (f" ({label})" if label else "") + "\n"
+        if x.get("error"):
+            line += f"    ⚠️ {x['error'][:160]}\n"
+        if base:
+            line += f"    {base}/paper/{x['id']}\n"
+        return line
+
+    def rows(items, limit=10):
+        text = "".join(row(x) for x in items[:limit])
+        return text + (f"  … and {len(items) - limit} more\n" if len(items) > limit else "")
+
+    fresh_gave_up = [x for x in bl["deep_gave_up"]
+                     if since is None or (x.get("failed_at") and datetime.fromisoformat(x["failed_at"]) >= since)]
+    older_gave_up = len(bl["deep_gave_up"]) - len(fresh_gave_up)
+    parts = []
+    if bl["deep_retry"]:
+        parts.append(f"🔁 Deep read failed, retried next run ({len(bl['deep_retry'])}):\n" + rows(bl["deep_retry"]))
+    if fresh_gave_up:
+        parts.append(f"🛑 Deep read failed {DEEP_MAX_FAILURES} times, no more automatic retries — "
+                     f"open the paper and press Deep read ({len(fresh_gave_up)}):\n" + rows(fresh_gave_up))
+    counts = []
+    if bl["deep_waiting"]:
+        counts.append(f"{len(bl['deep_waiting'])} waiting for a deep-read slot (nightly cap / budget)")
+    if bl["review_pending"]:
+        counts.append(f"{len(bl['review_pending'])} waiting for a review")
+    if bl["screen_pending"]:
+        counts.append(f"{bl['screen_pending']} not screened yet")
+    if older_gave_up:
+        counts.append(f"{older_gave_up} given up earlier (see the home page)")
+    if counts:
+        parts.append("⏳ Queued for the next run: " + "; ".join(counts) + ".\n")
+    if not parts:
+        return None
+    return "\n".join(parts)
+
+
+async def _run_cycle():
     await logger.log("Starting worker cycle...")
     run_started_at = datetime.now()
 
@@ -92,14 +204,10 @@ async def run_worker():
 
     notifier = get_notifier()
 
-    # Papers can sit as NEW without today's fetch producing anything: a backfill
-    # inserts them directly, and an earlier run may have died mid-scoring. Those
-    # still deserve a cycle, so only the genuinely idle case stops early.
-    with Session(engine) as session:
-        pending_new = session.exec(select(Paper.id).where(Paper.status == "NEW")).first()
-
-    # Nothing new and nothing pending — send rest-day notification and stop early
-    if not new_papers and not pending_new:
+    # Work can be pending without today's fetch producing anything (weekends, a backfill, an earlier
+    # run that died, deep reads left for a free slot, papers waiting for the digest), so only the
+    # genuinely idle case stops early.
+    if not new_papers and not _has_pending_work():
         await logger.log("No new papers retrieved.")
         if notifier:
             if not fetch_error:  # the outage alert already went out; "taking a break" would be misleading
@@ -132,8 +240,7 @@ async def run_worker():
 
     # 4. Notify
     with Session(engine) as session:
-        statement = select(Paper).where(Paper.status == "SUMMARIZED")
-        papers_to_notify = session.exec(statement).all()
+        papers_to_notify = session.exec(select(Paper).where(Paper.status == "SUMMARIZED")).all()
 
     if not notifier:
         await logger.log("No notifier configured.")
@@ -141,7 +248,7 @@ async def run_worker():
 
     # Always emit a summary header about today's scoring activity
     run_cost = cost_since(run_started_at)
-    from src.services import claude_budget
+    from src.services import claude_budget, verdict_pipeline
     b = claude_budget.status()
     budget_line = f"   • Claude budget: ${b['spent']:.2f} / ${b['budget']:.0f} this cycle\n"
     cost_line = f"   • LLM cost this run: ${run_cost:.3f}\n" if run_cost is not None else ""
@@ -154,47 +261,28 @@ async def run_worker():
         f"{cost_line}"
         f"{budget_line}"
     )
-    messages = [summary_msg]
+    await notifier.send_message(summary_msg)
 
     if papers_to_notify:
         await logger.log(f"Notifying {len(papers_to_notify)} papers...")
-        # Group papers by published date
-        from collections import defaultdict
-        by_date = defaultdict(list)
-        for p in papers_to_notify:
-            date_key = p.published_at.strftime("%Y-%m-%d")
-            by_date[date_key].append(p)
+    failed_chunks = 0
+    for text, ids in _digest_chunks(papers_to_notify):
+        if await notifier.send_message(text):
+            _mark_pushed(ids)   # per message, so a failed one is re-sent next run without duplicating the rest
+        else:
+            failed_chunks += 1
+    if failed_chunks:
+        await logger.log(f"{failed_chunks} digest message(s) failed; those papers are re-sent next run.")
 
-        # Sort dates (newest first), sort papers within each date by score desc
-        for date_key in sorted(by_date.keys(), reverse=True):
-            date_papers = sorted(by_date[date_key], key=lambda x: x.score or 0, reverse=True)
-            digest = f"📅 {date_key}  ({len(date_papers)} papers)\n"
-            digest += "─" * 30 + "\n\n"
-            for i, p in enumerate(date_papers, 1):
-                aff = f" | {p.main_affiliation}" if p.main_affiliation else ""
-                digest += f"{i}. {p.title}\n"
-                authors = p.authors_list
-                if authors:
-                    author_str = ", ".join(authors[:3])
-                    if len(authors) > 3:
-                        author_str += f" +{len(authors) - 3} more"
-                    digest += f"   👥 {author_str}\n"
-                label = VERDICT_LABEL.get(_verdict(p))
-                digest += (f"   ⭐ {label} ({p.score}){aff}\n" if label else f"   ⭐ Score: {p.score}{aff}\n")
-                from src.services import project_service
-                projs = project_service.projects_of(p.id)
-                if projs:
-                    digest += f"   📁 {', '.join(projs)}\n"
-                if settings.PUBLIC_BASE_URL:
-                    digest += f"   📖 {settings.PUBLIC_BASE_URL.rstrip('/')}/read/{p.id}\n"
-                digest += f"   🔗 {p.pdf_url}\n"
-                if p.summary_personalized:
-                    digest += f"   💡 {summary_tldr(p.summary_personalized, 150)}\n"
-                digest += "\n"
-            messages.append(digest)
+    # Still to do: failed deep reads (retried next run or given up) and queued papers
+    try:
+        msg = backlog_section(verdict_pipeline.backlog(), since=run_started_at)
+        if msg:
+            await notifier.send_message(msg, title="⏳ Paper Agent: still to do")
+    except Exception as e:
+        await logger.log(f"Backlog section skipped: {e}")
 
     # Hot section: popular papers, relevant or not, each pushed once
-    hot_ids = []
     if settings.HOT_ENABLED:
         try:
             from src.services import hot_service
@@ -205,24 +293,20 @@ async def run_worker():
                         Paper.id.in_([x.paper_id for x in sigs]))).all()}
                 talk = await hot_service.chatter(list(hot_papers.values()), log=logger.log)
                 hot_msg = hot_service.section(sigs, hot_papers, talk)
-                if hot_msg:
-                    messages.append(hot_msg)
-                    hot_ids = list(hot_papers)
+                if hot_msg and await notifier.send_message(hot_msg):
+                    hot_service.mark_pushed(list(hot_papers))
         except Exception as e:
             await logger.log(f"Hot section skipped: {e}")
 
-    success = await notifier.send_messages(messages)
-    if success and hot_ids:
-        from src.services import hot_service
-        hot_service.mark_pushed(hot_ids)
 
-    if success and papers_to_notify:
-        with Session(engine) as session:
-            for p in papers_to_notify:
-                db_p = session.get(Paper, p.id)
+def _mark_pushed(ids: List[str]) -> None:
+    with Session(engine) as session:
+        for pid in ids:
+            db_p = session.get(Paper, pid)
+            if db_p and db_p.status == "SUMMARIZED":
                 db_p.status = "PUSHED"
                 session.add(db_p)
-            session.commit()
+        session.commit()
 
 
 async def process_single_paper(paper_id: str, force_rescore: bool = False, notify: bool = True):

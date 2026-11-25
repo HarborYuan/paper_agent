@@ -248,14 +248,28 @@ async def screen(papers: List[Paper], runner: ClaudeRunner, log=None, batch=None
         r = res.get(f"screen:{p.id}")
         if r is None or not r.ok:
             continue  # stays NEW; retried next run
-        d = r.data
-        s1 = 20 * int(d["relevance"])
-        reason = {"pipeline": "verdict", "stage1": {"model": model, "score": s1, **d}}
-        passed = d["relevance"] >= settings.SCREEN_MIN_RELEVANCE or p.id in keep or bool(d.get("matched_projects"))
-        _save(p, score_stage1=s1, score=s1, score_model=model, score_reason=json.dumps(reason, ensure_ascii=False),
-              status="NEW" if passed else "FILTERED")
-        out[p.id] = d
+        if await _guarded(log, "screen", p, _apply_screen, p, r.data, model, keep):
+            out[p.id] = r.data
     return out
+
+
+def _apply_screen(p: Paper, d: dict, model: str, keep) -> None:
+    s1 = 20 * int(d["relevance"])
+    reason = {"pipeline": "verdict", "stage1": {"model": model, "score": s1, **d}}
+    passed = d["relevance"] >= settings.SCREEN_MIN_RELEVANCE or p.id in keep or bool(d.get("matched_projects"))
+    _save(p, score_stage1=s1, score=s1, score_model=model, score_reason=json.dumps(reason, ensure_ascii=False),
+          status="NEW" if passed else "FILTERED")
+
+
+async def _guarded(log, stage: str, p: Paper, fn, *args) -> bool:
+    """Apply one paper's result; a malformed result is logged and the paper stays where it was, so one
+    bad answer never throws away the rest of a paid batch."""
+    try:
+        fn(*args)
+        return True
+    except Exception as e:
+        await _say(log, f"  - {stage} result for {p.id} not applied: {type(e).__name__}: {e}")
+        return False
 
 
 async def review(papers: List[Paper], runner: ClaudeRunner, log=None, batch=None, projects: Optional[list] = None,
@@ -276,28 +290,30 @@ async def review(papers: List[Paper], runner: ClaudeRunner, log=None, batch=None
         r = res.get(f"review:{p.id}")
         if r is None or not r.ok:
             continue
-        d = r.data
-        score = verdict_score(d["verdict"], d)
-        reason = _reason(p)
-        reason["stage2"] = {"model": model, "had_full_text": bool(t), "score": score, **d}
-        fields = dict(score=score, score_model=model, score_reason=json.dumps(reason, ensure_ascii=False),
-                      status="SCORED" if d["verdict"] in PUSH_VERDICTS else "FILTERED")
-        if d.get("affiliations"):
-            fields.update(affiliations=sanitize_text(json.dumps(d["affiliations"], ensure_ascii=False)),
-                          main_company=sanitize_text(d.get("main_company")),
-                          main_university=sanitize_text(d.get("main_university")),
-                          main_affiliation=sanitize_text(d.get("main_affiliation")))
-        _save(p, **fields)
-        cand = candidates.get(p.id, {})
-        for m in d.get("project_matches", []) or []:
-            if m.get("relevant") and m.get("project") in cand:
-                try:
-                    project_service.add_papers(m["project"], [p.id], source="auto", reason=m.get("reason"),
-                                               similarity=cand[m["project"]])
-                except ValueError:
-                    pass
-        out[p.id] = d
+        if await _guarded(log, "review", p, _apply_review, p, r.data, t, model, candidates.get(p.id, {})):
+            out[p.id] = r.data
     return out
+
+
+def _apply_review(p: Paper, d: dict, text: Optional[str], model: str, cand: dict) -> None:
+    score = verdict_score(d["verdict"], d)
+    reason = _reason(p)
+    reason["stage2"] = {"model": model, "had_full_text": bool(text), "score": score, **d}
+    fields = dict(score=score, score_model=model, score_reason=json.dumps(reason, ensure_ascii=False),
+                  status="SCORED" if d["verdict"] in PUSH_VERDICTS else "FILTERED")
+    if d.get("affiliations"):
+        fields.update(affiliations=sanitize_text(json.dumps(d["affiliations"], ensure_ascii=False)),
+                      main_company=sanitize_text(d.get("main_company")),
+                      main_university=sanitize_text(d.get("main_university")),
+                      main_affiliation=sanitize_text(d.get("main_affiliation")))
+    _save(p, **fields)
+    for m in d.get("project_matches", []) or []:
+        if m.get("relevant") and m.get("project") in cand:
+            try:
+                project_service.add_papers(m["project"], [p.id], source="auto", reason=m.get("reason"),
+                                           similarity=cand[m["project"]])
+            except ValueError:
+                pass
 
 
 async def deep_read(papers: List[Paper], runner: ClaudeRunner, log=None, batch=None,
@@ -340,32 +356,39 @@ async def deep_read(papers: List[Paper], runner: ClaudeRunner, log=None, batch=N
         if r is None or not r.ok:
             _deep_failed(p, r.error if r else "no result")
             continue
-        d = r.data
-        notes = d.pop("notes", [])
-        tl = (d.pop("tldr", "") or "").strip()
-        summary = f"## TL;DR\n{tl}" if tl else ""
-        if units:
-            _verify_flags(notes, units)
-        translations = translated.get(p.id, {})
-        score = verdict_score(d["verdict"], d)
-        reason = _reason(p)
-        reason.pop("deep_failures", None)
-        reason["deep"] = {"model": model, "score": score, **d}
-        fields: Dict[str, Any] = dict(score_reason=json.dumps(reason, ensure_ascii=False),
-                                      summary_personalized=sanitize_text(summary) or p.summary_personalized)
-        if final:
-            if p.id in important and score < 90:
-                reason["boost"] = {"reason": "important_author", "from": score, "to": 90}
-                fields["score_reason"] = json.dumps(reason, ensure_ascii=False)
-                score = 90
-            fields.update(score=score, score_model=model,
-                          status="SUMMARIZED" if score >= cfg.score_threshold else "FILTERED")
-        _save(p, **fields)
-        _upsert_reading(p.id, status="DONE", notes=json.dumps(notes, ensure_ascii=False),
-                        translations=json.dumps(translations, ensure_ascii=False),
-                        deep=json.dumps(reason["deep"], ensure_ascii=False), error=None)
-        out[p.id] = reason["deep"]
+        try:
+            out[p.id] = _apply_deep(p, dict(r.data), units, translated.get(p.id, {}), model, final,
+                                    p.id in important, cfg.score_threshold)
+        except Exception as e:
+            await _say(log, f"  - deep result for {p.id} not applied: {type(e).__name__}: {e}")
+            _deep_failed(p, f"apply: {type(e).__name__}: {e}")
     return out
+
+
+def _apply_deep(p: Paper, d: dict, units, translations: Dict[str, str], model: str, final: bool,
+                important: bool, threshold: int) -> dict:
+    notes = d.pop("notes", [])
+    tl = (d.pop("tldr", "") or "").strip()
+    summary = f"## TL;DR\n{tl}" if tl else ""
+    if units:
+        _verify_flags(notes, units)
+    score = verdict_score(d["verdict"], d)
+    reason = _reason(p)
+    reason.pop("deep_failures", None)
+    reason["deep"] = {"model": model, "score": score, **d}
+    fields: Dict[str, Any] = dict(score_reason=json.dumps(reason, ensure_ascii=False),
+                                  summary_personalized=sanitize_text(summary) or p.summary_personalized)
+    if final:
+        if important and score < 90:
+            reason["boost"] = {"reason": "important_author", "from": score, "to": 90}
+            fields["score_reason"] = json.dumps(reason, ensure_ascii=False)
+            score = 90
+        fields.update(score=score, score_model=model, status="SUMMARIZED" if score >= threshold else "FILTERED")
+    _save(p, **fields)
+    _upsert_reading(p.id, status="DONE", notes=json.dumps(notes, ensure_ascii=False),
+                    translations=json.dumps(translations, ensure_ascii=False),
+                    deep=json.dumps(reason["deep"], ensure_ascii=False), error=None)
+    return reason["deep"]
 
 
 def _translations(r) -> Dict[str, str]:
@@ -508,7 +531,11 @@ async def deep_read_on_demand(paper_id: str, log=None) -> Optional[dict]:
     runner = ClaudeRunner(use_batch=False)
     if provisional_review(p) is None:   # never reviewed (old two-stage reviews are reused)
         await review([p], runner, log, batch=False)
-    res = await deep_read([p], runner, log, batch=False, final=False)
+    with Session(engine) as s:
+        p = s.get(Paper, paper_id)
+    # a paper still waiting for its deep read (SCORED) gets its final verdict here, so the nightly run
+    # does not read it a second time and the next digest pushes it
+    res = await deep_read([p], runner, log, batch=False, final=p.status == "SCORED")
     return res.get(paper_id)
 
 
@@ -583,3 +610,58 @@ async def backfill(start, end, deep_limit: int = 200,
 
 def affordable_deep(n: int) -> int:
     return claude_budget.affordable("deep", n)
+
+
+# ---------------------------------------------------------------------------- run lock / backlog
+# One pipeline run at a time: the nightly run, a manual run and a backfill would otherwise pick the
+# same NEW / SCORED papers and pay for them twice.
+RUN_LOCK = asyncio.Lock()
+
+
+def reset_interrupted() -> int:
+    """At startup: readings left RUNNING / PENDING by a restart can never finish; mark them failed."""
+    with Session(engine) as s:
+        rows = s.exec(select(PaperReading).where(PaperReading.status.in_(["RUNNING", "PENDING"]))).all()
+        for row in rows:
+            row.status, row.error, row.updated_at = "ERROR", "interrupted by a restart", datetime.now()
+            s.add(row)
+        s.commit()
+    return len(rows)
+
+
+def backlog() -> Dict[str, Any]:
+    """
+    Papers the pipeline still owes work on, for the digest and the home page:
+    deep_retry   - deep read failed, retried on the next run
+    deep_gave_up - deep read failed DEEP_MAX_FAILURES times; needs an on-demand read
+    deep_waiting - reviewed as worth reading, waiting for a deep-read slot (nightly cap or budget)
+    review_pending - passed the screen, review missing (failed or deferred); retried on the next run
+    screen_pending - not screened yet (failed, deferred, or fetched since the last run)
+    """
+    with Session(engine) as s:
+        scored = s.exec(select(Paper).where(Paper.status == "SCORED", Paper.user_score == None)).all()  # noqa: E711
+        new = s.exec(select(Paper).where(Paper.status == "NEW", Paper.user_score == None)).all()  # noqa: E711
+        ids = [p.id for p in scored]
+        readings = {r.paper_id: r for r in s.exec(select(PaperReading).where(PaperReading.paper_id.in_(ids))).all()} if ids else {}
+
+    def item(p: Paper, error: Optional[str] = None) -> dict:
+        r = readings.get(p.id)
+        return {"id": p.id, "title": p.title, "published_at": p.published_at.isoformat() if p.published_at else None,
+                "verdict": (provisional_review(p) or {}).get("verdict"), "score": p.score,
+                "failures": deep_failures(p), "error": error,
+                "failed_at": r.updated_at.isoformat() if r and r.status == "ERROR" and r.updated_at else None}
+
+    order = lambda p: ({"must_read": 0, "worth_reading": 1}.get((provisional_review(p) or {}).get("verdict"), 2),
+                       -(p.score or 0))
+    out = {"deep_retry": [], "deep_gave_up": [], "deep_waiting": [], "review_pending": [], "screen_pending": 0}
+    for p in sorted(scored, key=order):
+        n, r = deep_failures(p), readings.get(p.id)
+        err = (r.error if r is not None and r.status == "ERROR" else None) or ("deep read failed" if n else None)
+        key = "deep_gave_up" if n >= DEEP_MAX_FAILURES else "deep_retry" if n else "deep_waiting"
+        out[key].append(item(p, err))
+    for p in new:
+        if (_reason(p).get("stage1") or {}) and _reason(p).get("pipeline") == "verdict":
+            out["review_pending"].append(item(p))
+        else:
+            out["screen_pending"] += 1
+    return out

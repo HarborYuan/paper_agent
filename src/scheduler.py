@@ -29,7 +29,10 @@ class SchedulerService:
 
             hour, minute = map(int, str(settings.AUTO_UPDATE_TIME).split(":"))
             trigger = CronTrigger(hour=hour, minute=minute, timezone="UTC")
-            self.scheduler.add_job(run_worker, trigger=trigger, id=JOB_ID, replace_existing=True)
+            # A busy event loop at the trigger time must delay the run, not skip it (APScheduler's
+            # default grace period is one second).
+            self.scheduler.add_job(run_worker, trigger=trigger, id=JOB_ID, replace_existing=True,
+                                   misfire_grace_time=6 * 3600, coalesce=True, max_instances=1)
             if not self.scheduler.running:
                 self.scheduler.start()
             await logger.log(f"Scheduler: daily auto-update at {hour:02d}:{minute:02d} UTC.")

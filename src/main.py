@@ -43,6 +43,9 @@ async def lifespan(app: FastAPI):
     # Startup
     try:
         init_db()
+        n = verdict_pipeline.reset_interrupted()
+        if n:
+            await logger.log(f"Marked {n} deep read(s) interrupted by the restart as failed.")
         await scheduler_service.start()
     except Exception as e:
         await logger.log(f"DB/Scheduler Init Error: {e}")
@@ -104,6 +107,8 @@ async def trigger_run(background_tasks: BackgroundTasks):
     """
     Trigger the paper fetching and processing cycle in the background.
     """
+    if verdict_pipeline.RUN_LOCK.locked():
+        raise HTTPException(status_code=409, detail="A run or a backfill is already in progress.")
     background_tasks.add_task(run_worker)
     return {"message": "Paper processing cycle started in background."}
 
@@ -439,6 +444,12 @@ def get_next_date(date: str, session: Session = Depends(get_session)):
         raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
 
 # declared before /papers/{paper_id}, which would otherwise match it
+@api.get("/pipeline/backlog")
+def pipeline_backlog():
+    """Papers the pipeline still owes work on: failed deep reads (retried next run / given up) and queues."""
+    return verdict_pipeline.backlog()
+
+
 @api.get("/papers/backfill-verdicts")
 def backfill_status():
     return verdict_pipeline.BACKFILL
@@ -718,7 +729,8 @@ async def rescore_date(date: str, background_tasks: BackgroundTasks, push: bool 
 
         async def job():
             from src.services.claude_runner import ClaudeRunner
-            await verdict_pipeline.run_pipeline(papers, ClaudeRunner(), log=logger.log)
+            async with verdict_pipeline.RUN_LOCK:   # waits for a nightly run or backfill to finish
+                await verdict_pipeline.run_pipeline(papers, ClaudeRunner(), log=logger.log)
         background_tasks.add_task(job)
         return {"message": f"Started re-scoring {len(papers)} papers on {date} (Batch API; newly qualifying papers go out with the next digest)"}
         
@@ -732,8 +744,8 @@ async def backfill_verdicts(start: str, end: str, background_tasks: BackgroundTa
     jobs: screen -> review -> deep read with no nightly deep-read cap (`deep_limit` per day).
     Progress: GET /api/papers/backfill-verdicts.
     """
-    if verdict_pipeline.BACKFILL.get("running"):
-        raise HTTPException(status_code=409, detail="A backfill is already running.")
+    if verdict_pipeline.BACKFILL.get("running") or verdict_pipeline.RUN_LOCK.locked():
+        raise HTTPException(status_code=409, detail="A run or a backfill is already in progress.")
     try:
         lo, hi = datetime.strptime(start, "%Y-%m-%d").date(), datetime.strptime(end, "%Y-%m-%d").date()
     except ValueError:
@@ -746,7 +758,8 @@ async def backfill_verdicts(start: str, end: str, background_tasks: BackgroundTa
 
     async def job():
         try:
-            await verdict_pipeline.backfill(lo, hi, deep_limit=deep_limit, log=logger.log)
+            async with verdict_pipeline.RUN_LOCK:
+                await verdict_pipeline.backfill(lo, hi, deep_limit=deep_limit, log=logger.log)
         except Exception as e:
             verdict_pipeline.BACKFILL.update(running=False, error=str(e)[:500])
             await logger.log(f"Backfill failed: {e}")
