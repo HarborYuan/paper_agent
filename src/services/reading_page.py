@@ -57,6 +57,7 @@ main{max-width:1240px;margin:0 auto;padding:28px 24px 120px}
 h2.sec{font:600 22px/1.3 Georgia,serif;margin:46px 0 14px;padding-bottom:8px;border-bottom:1px solid var(--line)}
 h3.sec{font:600 18px/1.35 Georgia,serif;margin:30px 0 10px}
 h4.sec{font-size:15px;margin:22px 0 8px;color:var(--muted)}
+.en .sec.in{font:600 15px/1.4 -apple-system,sans-serif;color:var(--muted);margin:16px 0 8px;padding:0;border:0}
 .row{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);margin:0 0 14px;background:var(--paper);border:1px solid var(--line);border-radius:12px;overflow:hidden}
 .en{padding:16px 22px;font:15.5px/1.7 Georgia,"Times New Roman",serif}
 .en p{margin:0 0 10px}.en p:last-child{margin-bottom:0}
@@ -193,14 +194,20 @@ def render(paper, reading: Optional[dict], fig_base: str = "/api/figures/") -> s
                 note_of.setdefault(i, n)
         flags_all = [f for n in notes for f in n.get("flags", []) if f.get("verified")]
         fn_of = {id(f): k for k, f in enumerate(flags_all, 1)}
-        emitted = set()
+        pos = {u["id"]: k for k, u in enumerate(units)}
+        emitted, inline_heads = set(), set()
+
+        def heading(u, inline=False):
+            lvl = min(max(u.get("level", 2), 2), 4)
+            hid = f"s-{u['id']}"
+            if lvl <= 3:
+                toc.append(f"<a class='l{lvl}' href='#{hid}'>{e(u['text'])}</a>")
+            return f"<h{lvl} class='sec{' in' if inline else ''}' id='{hid}'>{e(u['text'])}</h{lvl}>"
+
         for u in units:
             if u["kind"] == "heading":
-                lvl = min(max(u.get("level", 2), 2), 4)
-                hid = f"s-{u['id']}"
-                body.append(f"<h{lvl} class='sec' id='{hid}'>{e(u['text'])}</h{lvl}>")
-                if lvl <= 3:
-                    toc.append(f"<a class='l{lvl}' href='#{hid}'>{e(u['text'])}</a>")
+                if u["id"] not in inline_heads:
+                    body.append(heading(u))
                 continue
             n = note_of.get(u["id"])
             if n is None:
@@ -211,7 +218,17 @@ def render(paper, reading: Optional[dict], fig_base: str = "/api/figures/") -> s
                 continue
             emitted.add(id(n))
             fl = [f for f in n.get("flags", []) if f.get("verified")]
-            en = "".join(_unit(by_id[i], [f for f in fl if f.get("id") == i], fn_of, fig_base) for i in n["ids"] if i in by_id)
+            # a note that runs across a heading keeps the heading in place inside the card
+            ids = set(n["ids"])
+            ps = [pos[i] for i in n["ids"] if i in pos]
+            en = ""
+            for k in range(min(ps), max(ps) + 1) if ps else ():
+                v = units[k]
+                if v["kind"] == "heading":
+                    inline_heads.add(v["id"])
+                    en += heading(v, inline=True)
+                elif v["id"] in ids:
+                    en += _unit(v, [f for f in fl if f.get("id") == v["id"]], fn_of, fig_base)
             zh_tr = "".join(
                 f"<p class='tr'>{('<span class=cap>' + ('Fig' if by_id[i]['kind'] == 'figure' else 'Table') + '</span>') if by_id[i]['kind'] in ('figure', 'table') else ''}{e(tr[i])}</p>"
                 for i in n["ids"] if i in by_id and i in tr)

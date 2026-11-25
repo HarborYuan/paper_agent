@@ -409,3 +409,24 @@ def test_legacy_two_stage_review_is_reused():
     assert verdict_pipeline.provisional_review(p) is None          # screened only -> a new review runs
     p.score_reason = json.dumps({"stage2": {"error": "stage-2 scoring failed"}})
     assert verdict_pipeline.provisional_review(p) is None
+
+
+def test_reading_page_keeps_heading_inside_cross_heading_note(db):
+    units = [
+        {"id": "H0", "kind": "heading", "level": 3, "text": "3.1 Method"},
+        {"id": "P1", "kind": "para", "text": "Intro of the subsection."},
+        {"id": "H2", "kind": "heading", "level": 4, "text": "Anchors."},
+        {"id": "P2", "kind": "para", "text": "Body under the run-in title."},
+        {"id": "H4", "kind": "heading", "level": 4, "text": "Tree."},
+        {"id": "P3", "kind": "para", "text": "Next paragraph."},
+    ]
+    reading = {"status": "DONE", "units": units, "translations": {},
+               "notes": [{"ids": ["P1", "P2"], "gist": "要点一", "flags": []},
+                         {"ids": ["P3"], "gist": "要点二", "flags": []}]}
+    html = reading_page.render(_paper("2611.00009"), reading)
+    # the run-in title sits between its neighbours inside the card, and is not repeated after it
+    assert html.count("Anchors.</h4>") == 1
+    assert html.index("Intro of the subsection.") < html.index("Anchors.</h4>") < html.index("Body under the run-in title.")
+    assert "class='sec in' id='s-H2'" in html
+    assert html.index("Body under the run-in title.") < html.index("Tree.</h4>") < html.index("Next paragraph.")
+    assert html.count("href='#s-H0'") == 1
