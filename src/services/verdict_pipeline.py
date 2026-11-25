@@ -482,31 +482,24 @@ def is_verdict_scored(p: Paper) -> bool:
     return isinstance(r, dict) and r.get("pipeline") == "verdict"
 
 
-async def backfill(start, end, max_cost: float, deep_limit: int = 200, silent: bool = True,
+async def backfill(start, end, deep_limit: int = 200,
                    runner: Optional[ClaudeRunner] = None, log=None) -> Dict[str, Any]:
     """
     Run the verdict pipeline over past days, newest first, one day per set of batches: papers the
     old pipeline scored get screen -> review -> deep read; papers this pipeline already reviewed but
-    never deep-read get their deep read. Stops before a day once this run has spent within
-    BACKFILL_DAY_HEADROOM of `max_cost`. With `silent`, papers that end up SUMMARIZED are marked
-    PUSHED so the next digest is not flooded with old papers (several were pushed already).
+    never deep-read get their deep read. The monthly Claude budget still applies.
     """
     from datetime import timedelta
     from src.services.usage_service import cost_since
     runner = runner or ClaudeRunner()
     began = datetime.now()
     st = BACKFILL
-    st.update(running=True, started_at=began.isoformat(), start=str(start), end=str(end), max_cost=max_cost,
-              days={}, spent=0.0, stopped=None)
+    st.update(running=True, started_at=began.isoformat(), start=str(start), end=str(end),
+              days={}, spent=0.0)
     try:
         day = end
         while day >= start:
-            spent = cost_since(began) or 0.0
-            st["spent"] = round(spent, 4)
-            if spent + BACKFILL_DAY_HEADROOM > max_cost:
-                st["stopped"] = f"cost cap: ${spent:.2f} spent of ${max_cost:.2f}"
-                await _say(log, f"Backfill stopped before {day}: {st['stopped']}")
-                break
+            st["spent"] = round(cost_since(began) or 0.0, 4)
             lo, hi = datetime.combine(day, datetime.min.time()), datetime.combine(day, datetime.max.time())
             with Session(engine) as s:
                 papers = s.exec(select(Paper).where(Paper.published_at >= lo, Paper.published_at <= hi,
@@ -519,15 +512,6 @@ async def backfill(start, end, max_cost: float, deep_limit: int = 200, silent: b
                 cap = min(deep_limit, affordable_deep(len(waiting)))
                 done = await deep_read(select_for_deep(waiting, cap), runner, log, final=True)
                 stats["deep_read"] = stats.get("deep_read", 0) + len(done)
-            ids = [p.id for p in papers]
-            with Session(engine) as s:
-                rows = s.exec(select(Paper).where(Paper.id.in_(ids), Paper.status == "SUMMARIZED")).all()
-                if silent:
-                    for r in rows:
-                        r.status = "PUSHED"
-                        s.add(r)
-                    s.commit()
-            stats["summarized"] = len(rows)
             st["days"][str(day)] = stats
             day -= timedelta(days=1)
         st["spent"] = round(cost_since(began) or 0.0, 4)
@@ -535,9 +519,6 @@ async def backfill(start, end, max_cost: float, deep_limit: int = 200, silent: b
         return st
     finally:
         st.update(running=False, finished_at=datetime.now().isoformat())
-
-
-BACKFILL_DAY_HEADROOM = 5.0  # a busy day costs ~$3-5, so stop early enough to stay under the cap
 
 
 def affordable_deep(n: int) -> int:

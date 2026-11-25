@@ -433,28 +433,25 @@ def test_reading_page_keeps_heading_inside_cross_heading_note(db):
 
 
 @pytest.mark.asyncio
-async def test_backfill_reruns_old_days_silently_and_respects_cost_cap(db, monkeypatch):
+async def test_backfill_reruns_old_days(db, monkeypatch):
     from datetime import date
-    import src.services.usage_service as usage_service
     monkeypatch.setattr(verdict_pipeline.settings, "SCREEN_MIN_RELEVANCE", 4)
 
     async def fake_units(pid, pdf_url=None):
         return [dict(u) for u in UNITS]
     monkeypatch.setattr(reading_service, "fetch_units", fake_units)
     with Session(db) as s:
-        for pid, day in (("2611.00001", 20), ("2611.00002", 20), ("2611.00003", 19)):
+        for pid, day in (("2611.00001", 20), ("2611.00002", 20), ("2611.00003", 18)):
             p = _paper(pid, title="Core paper" if pid == "2611.00001" else "Other paper")
             p.published_at = datetime(2026, 11, day, 12)
             p.status, p.score_reason = "PUSHED", json.dumps({"stage1": {"score": 80}})  # old pipeline
             s.add(p)
         s.commit()
-    spent = iter([0.0, 99.0, 99.0])  # day 20 runs, the cap stops day 19
-    monkeypatch.setattr(usage_service, "cost_since", lambda since: next(spent))
     runner = ClaudeRunner(client=FakeClient(_responder), use_batch=True, poll_seconds=0)
-    st = await verdict_pipeline.backfill(date(2026, 11, 19), date(2026, 11, 20), max_cost=50, runner=runner)
-    assert list(st["days"]) == ["2026-11-20"] and st["stopped"].startswith("cost cap") and not st["running"]
-    assert st["days"]["2026-11-20"]["deep_read"] == 1 and st["days"]["2026-11-20"]["summarized"] == 1
+    st = await verdict_pipeline.backfill(date(2026, 11, 19), date(2026, 11, 20), runner=runner)
+    assert list(st["days"]) == ["2026-11-20", "2026-11-19"] and not st["running"]
+    assert st["days"]["2026-11-20"]["deep_read"] == 1 and st["days"]["2026-11-19"] == {}
     with Session(db) as s:
         core, other, untouched = (s.get(Paper, i) for i in ("2611.00001", "2611.00002", "2611.00003"))
-    assert core.status == "PUSHED" and verdict_pipeline.is_verdict_scored(core)  # silent: no digest
+    assert core.status == "SUMMARIZED" and verdict_pipeline.is_verdict_scored(core)
     assert other.status == "FILTERED" and untouched.status == "PUSHED" and not verdict_pipeline.is_verdict_scored(untouched)
