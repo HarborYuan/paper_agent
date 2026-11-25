@@ -462,3 +462,47 @@ def test_backfill_status_route_is_not_shadowed():
     from src.main import app
     r = TestClient(app).get("/api/papers/backfill-verdicts")
     assert r.status_code == 200 and "running" in r.json()
+
+
+@pytest.mark.asyncio
+async def test_deep_read_skips_a_paper_that_cannot_be_prepared(db, monkeypatch):
+    async def flaky_units(pid, pdf_url=None):
+        if pid == "2611.00002":
+            raise RuntimeError("arxiv timed out")
+        return [dict(u) for u in UNITS]
+    monkeypatch.setattr(reading_service, "fetch_units", flaky_units)
+    with Session(db) as s:
+        for pid in ("2611.00001", "2611.00002"):
+            s.add(_paper(pid, title="Core paper"))
+        s.commit()
+        papers = s.exec(select(Paper)).all()
+    runner = ClaudeRunner(client=FakeClient(_responder), use_batch=True, poll_seconds=0)
+    out = await verdict_pipeline.deep_read(papers, runner, final=True)
+    assert set(out) == {"2611.00001"}
+    bad = verdict_pipeline.get_reading("2611.00002")
+    assert bad["status"] == "ERROR" and "arxiv timed out" in bad["error"]
+
+
+@pytest.mark.asyncio
+async def test_backfill_moves_past_a_failing_day(db, monkeypatch):
+    from datetime import date
+    calls = []
+
+    async def fake_run(papers, runner, log=None, deep_limit=0):
+        day = papers[0].published_at.day
+        calls.append(day)
+        if day == 20:
+            raise RuntimeError("boom")
+        return {"reviewed": len(papers)}
+    monkeypatch.setattr(verdict_pipeline, "run_pipeline", fake_run)
+    with Session(db) as s:
+        for pid, day in (("2611.00001", 20), ("2611.00002", 19)):
+            p = _paper(pid)
+            p.published_at = datetime(2026, 11, day, 12)
+            p.status, p.score_reason = "PUSHED", json.dumps({"stage1": {"score": 80}})
+            s.add(p)
+        s.commit()
+    st = await verdict_pipeline.backfill(date(2026, 11, 19), date(2026, 11, 20),
+                                         runner=ClaudeRunner(client=FakeClient(_responder), use_batch=True))
+    assert calls == [20, 19] and not st["running"]
+    assert "boom" in st["days"]["2026-11-20"]["error"] and st["days"]["2026-11-19"] == {"reviewed": 1}

@@ -308,21 +308,26 @@ async def deep_read(papers: List[Paper], runner: ClaudeRunner, log=None, batch=N
     model = cfg.summary_model
     reqs, ctx = [], {}
     for p in papers:
-        reason = _reason(p)
         rv = provisional_review(p) or {"verdict": "worth_reading", "relevance": 0, "novelty": 0, "evidence": 0,
                                        "reusability": 0, "one_line_reason": "(no provisional review)"}
-        units = await reading_service.fetch_units(p.id, p.pdf_url)
-        text = None if units else await _full_text(p)
+        try:
+            units = await reading_service.fetch_units(p.id, p.pdf_url)
+            text = None if units else await _full_text(p)
+            paper_reqs = [deep_request(p, rv, units, text, model)] + ([translate_request(p, units)] if units else [])
+        except Exception as e:  # one paper that cannot be prepared must not sink the whole batch
+            await _say(log, f"  - Deep read of {p.id} skipped: {type(e).__name__}: {e}")
+            _upsert_reading(p.id, status="ERROR", error=f"prepare: {type(e).__name__}: {e}"[:500])
+            continue
         ctx[p.id] = (units, rv)
         _upsert_reading(p.id, status="RUNNING", source="html" if units else "text", model=model,
                         units=reading_service.dumps(units) if units else None, error=None)
-        reqs.append(deep_request(p, rv, units, text, model))
-        if units:
-            reqs.append(translate_request(p, units))
+        reqs.extend(paper_reqs)
     res = await runner.run(reqs, log, batch=batch)
     important = _important_ids(papers) if final else set()
     out = {}
     for p in papers:
+        if p.id not in ctx:
+            continue
         units, rv = ctx[p.id]
         r = res.get(f"deep:{p.id}")
         if r is None or not r.ok:
@@ -507,11 +512,17 @@ async def backfill(start, end, deep_limit: int = 200,
             old = [p for p in papers if not is_verdict_scored(p)]
             waiting = [p for p in papers if is_verdict_scored(p) and p.status == "SCORED"]
             await _say(log, f"Backfill {day}: {len(old)} to re-run, {len(waiting)} waiting for a deep read")
-            stats = await run_pipeline(old, runner, log=log, deep_limit=deep_limit) if old else {}
-            if waiting:
-                cap = min(deep_limit, affordable_deep(len(waiting)))
-                done = await deep_read(select_for_deep(waiting, cap), runner, log, final=True)
-                stats["deep_read"] = stats.get("deep_read", 0) + len(done)
+            try:
+                stats = await run_pipeline(old, runner, log=log, deep_limit=deep_limit) if old else {}
+                if waiting:
+                    cap = min(deep_limit, affordable_deep(len(waiting)))
+                    done = await deep_read(select_for_deep(waiting, cap), runner, log, final=True)
+                    stats["deep_read"] = stats.get("deep_read", 0) + len(done)
+            except BudgetExceeded:
+                raise
+            except Exception as e:  # move on to the next day; a re-run picks this one up again
+                await _say(log, f"Backfill {day} failed: {type(e).__name__}: {e}")
+                stats = {"error": f"{type(e).__name__}: {e}"[:500]}
             st["days"][str(day)] = stats
             day -= timedelta(days=1)
         st["spent"] = round(cost_since(began) or 0.0, 4)

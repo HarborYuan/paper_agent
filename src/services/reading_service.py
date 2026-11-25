@@ -329,7 +329,10 @@ def crop_units(paper_id: str, units: List[dict], pdf_bytes: Optional[bytes]) -> 
 async def fetch_units(paper_id: str, pdf_url: Optional[str] = None) -> Optional[List[dict]]:
     """arXiv HTML -> units, with broken figures/tables cropped from the PDF. None if no HTML version."""
     async with httpx.AsyncClient(follow_redirects=True, timeout=60, headers=UA) as c:
-        r = await c.get(f"https://arxiv.org/html/{paper_id}")
+        try:
+            r = await c.get(f"https://arxiv.org/html/{paper_id}")
+        except httpx.HTTPError:
+            return None   # the caller falls back to the PDF text
         if r.status_code != 200 or "ltx_document" not in r.text:
             return None
         units = segment(r.text, str(r.url))
@@ -341,7 +344,10 @@ async def fetch_units(paper_id: str, pdf_url: Optional[str] = None) -> Optional[
                 pdf = pr.content if pr.status_code == 200 and pr.content[:4] == b"%PDF" else None
             except httpx.HTTPError:
                 pdf = None
-            crop_units(paper_id, units, pdf)
+            try:
+                crop_units(paper_id, units, pdf)
+            except Exception as e:  # an unreadable PDF leaves the HTML figures as they are
+                print(f"  - crops for {paper_id} failed: {e}")
     return units
 
 
