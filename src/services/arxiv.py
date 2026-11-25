@@ -11,14 +11,25 @@ from src.database import engine
 
 ARXIV_API_URL = "https://export.arxiv.org/api/query"
 API_TIMEOUT = 60.0
-# Seconds to wait before each retry. arXiv asks for >= 3 s between calls; its API also has
-# transient bad spells (5xx, empty feeds), so the daily fetch backs off generously.
-RETRY_DELAYS = (5, 20, 60)
+# Seconds to wait before each retry. arXiv asks for >= 3 s between calls and throttles per public IP
+# (HTTP 429) when it is busy; hammering it during a bad spell only extends the throttle, so back off
+# for minutes, and longer when the server says so (Retry-After).
+RETRY_DELAYS = (10, 60, 180)
+MAX_RETRY_AFTER = 600
 ID_LIST_CHUNK = 100
+# The category listing is paged: small requests are cheap for arXiv and rarely throttled, and paging
+# stops at the first page the library already holds, so a missed day is picked up on the next run.
+PAGE_SIZE = 200
+PAGE_DELAY = 5.0
 
 
 class ArxivAPIError(RuntimeError):
-    """The arXiv export API failed (network / HTTP error, error feed, or an empty result) after retries."""
+    """The arXiv export API failed (network / HTTP error, error feed, or an empty result) after retries.
+    `partial` holds what a paged fetch got before the failing page."""
+
+    def __init__(self, message: str, partial=None):
+        super().__init__(message)
+        self.partial = list(partial or [])
 
 
 def _strip_version(arxiv_id: str) -> str:
@@ -33,9 +44,11 @@ def query_api(params: Dict, *, require_entries: bool = True, retry_delays=None) 
     """
     delays = RETRY_DELAYS if retry_delays is None else retry_delays
     last_error = "unknown error"
+    retry_after = 0
     for attempt in range(len(delays) + 1):
         if attempt:
-            time.sleep(delays[attempt - 1])
+            time.sleep(max(delays[attempt - 1], retry_after))
+            retry_after = 0
         try:
             with httpx.Client(follow_redirects=True, timeout=API_TIMEOUT,
                               headers={"User-Agent": "paper-agent (https://github.com/HarborYuan/paper_agent)"}) as client:
@@ -45,6 +58,8 @@ def query_api(params: Dict, *, require_entries: bool = True, retry_delays=None) 
             print(f"arXiv API attempt {attempt + 1} failed: {last_error}")
             continue
         if resp.status_code != 200:
+            ra = (getattr(resp, "headers", None) or {}).get("retry-after", "")
+            retry_after = min(int(ra), MAX_RETRY_AFTER) if str(ra).isdigit() else 0
             last_error = f"HTTP {resp.status_code}: {resp.text[:200].strip()}"
             print(f"arXiv API attempt {attempt + 1} failed: {last_error}")
             continue
@@ -99,76 +114,67 @@ class ArxivFetcher:
     def __init__(self, categories: List[str] = ["cs.CV", "cs.CL", "cs.AI"]):
         self.categories = categories
 
-    def fetch_papers(self, max_results: int = 2000) -> List[Paper]:
+    def fetch_papers(self, max_results: int = 2000, page_size: int = PAGE_SIZE, page_delay: float = PAGE_DELAY,
+                     retry_delays=None) -> List[Paper]:
         """
-        Fetch papers from arXiv API for the configured categories.
-        Sort by submittedDate descending (newest first).
+        Newest papers in the configured categories (submittedDate, descending), fetched in pages of
+        `page_size`. Paging stops at the first page whose papers are all in the library already, at the
+        end of the listing, or at `max_results`. Raises ArxivAPIError when the first page fails; when a
+        later page fails, the error carries the papers fetched so far in `.partial`.
         """
-        # Construct query: cat:cs.CV OR cat:cs.CL ...
         cat_query = " OR ".join([f"cat:{cat}" for cat in self.categories])
-        
-        # Determine strict date range?
-        # For MVP, we just ask for the latest N papers and filter by DB existence.
-        # "submittedDate" is the standard sort.
-        
-        query_params = {
-            "search_query": cat_query,
-            "sortBy": "submittedDate",
-            "sortOrder": "descending",
-            "start": 0,
-            "max_results": max_results,
-        }
-        
-        print(f"Fetching from arXiv: {ARXIV_API_URL} {query_params}")
-        # Raises ArxivAPIError if the API is down / returns nothing; run_worker alerts on it
-        feed = query_api(query_params)
-        
-        papers = []
-        for entry in feed.entries:
-            # Extract ID: http://arxiv.org/abs/2101.12345v1 -> 2101.12345v1 or just 2101.12345
-            # User typically wants versioned or unversioned. The atom ID is usually a URL.
-            # We will use the ID string from the ID field.
-            arxiv_id = _strip_version(entry.id.split("/abs/")[-1])
-            
-            # Helper to safely get attributes
-            title = entry.title.replace("\n", " ")
-            abstract = entry.summary.replace("\n", " ")
-            authors = []
-            for author in entry.authors:
-                # Clean author name: remove colons and surrounding whitespace
-                name = author.name.replace(":", "").strip()
-                if name:
-                    authors.append(name)
-            published = datetime(*entry.published_parsed[:6])
-            updated = datetime(*entry.updated_parsed[:6])
-            
-            # Primary category
-            primary_cat = entry.arxiv_primary_category["term"]
-            
-            # All categories
-            categories = [tag["term"] for tag in entry.tags]
-            
-            # PDF Link
-            pdf_url = ""
-            for link in entry.links:
-                if link.type == "application/pdf":
-                    pdf_url = link.href
-            
-            paper = Paper(
-                id=arxiv_id,
-                title=title,
-                authors=json.dumps(authors),
-                summary_generic=abstract,   
-                published_at=published,
-                category_primary=primary_cat,
-                all_categories=json.dumps(categories),
-                pdf_url=pdf_url,
-                updated_at=updated
-            )
-            papers.append(paper)
-            
+        papers: Dict[str, Paper] = {}
+        start = 0
+        while start < max_results:
+            if start:
+                time.sleep(page_delay)
+            n = min(page_size, max_results - start)
+            params = {"search_query": cat_query, "sortBy": "submittedDate", "sortOrder": "descending",
+                      "start": start, "max_results": n}
+            print(f"Fetching from arXiv: {ARXIV_API_URL} {params}")
+            try:
+                # The first page is never legitimately empty; a later one is, at the end of the listing
+                feed = query_api(params, require_entries=start == 0, retry_delays=retry_delays)
+            except ArxivAPIError as e:
+                if not papers:
+                    raise
+                raise ArxivAPIError(f"{e} (page at offset {start}; kept {len(papers)} papers from earlier pages)",
+                                    partial=papers.values()) from e
+            page = [self._parse_entry(entry) for entry in feed.entries]
+            for paper in page:
+                papers.setdefault(paper.id, paper)  # new submissions shift the listing between pages
+            if len(page) < n:
+                break
+            if len(self._known_ids([p.id for p in page])) == len(page):
+                break
+            start += n
         print(f"Fetched {len(papers)} entries from arXiv.")
-        return papers
+        return list(papers.values())
+
+    @staticmethod
+    def _known_ids(ids: List[str]) -> set:
+        with Session(engine) as session:
+            return set(session.exec(select(Paper.id).where(Paper.id.in_(ids))).all())
+
+    @staticmethod
+    def _parse_entry(entry) -> Paper:
+        arxiv_id = _strip_version(entry.id.split("/abs/")[-1])
+        authors = [n for n in (a.name.replace(":", "").strip() for a in entry.authors) if n]
+        pdf_url = ""
+        for link in entry.get("links", []):
+            if link.get("type") == "application/pdf":
+                pdf_url = link.href
+        return Paper(
+            id=arxiv_id,
+            title=entry.title.replace("\n", " "),
+            authors=json.dumps(authors),
+            summary_generic=entry.summary.replace("\n", " "),
+            published_at=datetime(*entry.published_parsed[:6]),
+            category_primary=entry.arxiv_primary_category["term"],
+            all_categories=json.dumps([tag["term"] for tag in entry.tags]),
+            pdf_url=pdf_url,
+            updated_at=datetime(*entry.updated_parsed[:6]),
+        )
 
     def fetch_paper_by_id(self, paper_id: str) -> List[Paper]:
         """

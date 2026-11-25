@@ -15,7 +15,8 @@ from src.services.usage_service import cost_since
 from src.services.embedding_service import embed_new_papers
 from src.logger import logger
 
-PAPER_SYNC_LIMIT = 500
+# Upper bound on the paged daily fetch; it normally stops after 2-3 pages, at papers already in the library
+PAPER_SYNC_LIMIT = 2000
 VERDICT_LABEL = {"must_read": "Must Read", "worth_reading": "Worth Reading"}
 
 
@@ -65,7 +66,7 @@ async def run_worker():
     except ArxivAPIError as e:
         # Don't mistake an outage for a quiet day: alert, then still work through pending papers
         fetch_error = e
-        fetched_papers = []
+        fetched_papers = e.partial  # pages fetched before the failure are still worth keeping
         await logger.log(f"arXiv fetch failed: {e}")
         if not await alert_arxiv_failure("Daily arXiv fetch", e):
             await logger.log("arXiv failure alert not sent (no notifier configured or push failed).")

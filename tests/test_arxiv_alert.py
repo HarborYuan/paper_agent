@@ -167,3 +167,55 @@ def test_outage_still_processes_pending_papers(monkeypatch):
     asyncio.run(worker.run_worker())
     assert scored == ["2501.00001"]
     assert "arXiv API" in (n.sent[0][0] or "")
+
+
+# ---------------------------------------------------------------------------
+# fetch_papers: paging
+# ---------------------------------------------------------------------------
+def _feed(ids):
+    entries = "".join(f"""<entry><id>http://arxiv.org/abs/{i}v1</id>
+    <published>2026-11-24T00:00:00Z</published><updated>2026-11-24T00:00:00Z</updated>
+    <title>P {i}</title><summary>abs</summary><author><name>Ada Lovelace</name></author>
+    <arxiv:primary_category term="cs.CV"/><category term="cs.CV"/></entry>""" for i in ids)
+    return ('<?xml version="1.0" encoding="UTF-8"?><feed xmlns="http://www.w3.org/2005/Atom" '
+            f'xmlns:arxiv="http://arxiv.org/schemas/atom">{entries}</feed>')
+
+
+def _fetcher(monkeypatch, responses, known=()):
+    calls = []
+    monkeypatch.setattr(arxiv.httpx, "Client", _fake_client(responses, calls))
+    monkeypatch.setattr(arxiv.ArxivFetcher, "_known_ids", staticmethod(lambda ids: set(ids) & set(known)))
+    return arxiv.ArxivFetcher(["cs.CV"]), calls
+
+
+def test_fetch_pages_until_a_page_is_already_in_the_library(monkeypatch):
+    pages = [["2611.00006", "2611.00005"], ["2611.00004", "2611.00003"], ["2611.00002", "2611.00001"]]
+    f, calls = _fetcher(monkeypatch, [_Resp(200, _feed(p)) for p in pages],
+                        known={"2611.00003", "2611.00002", "2611.00001"})
+    got = f.fetch_papers(max_results=100, page_size=2, page_delay=0, retry_delays=())
+    assert [c["start"] for c in calls] == [0, 2, 4]  # page 2 is partly new, page 3 fully known -> stop
+    assert [p.id for p in got] == ["2611.00006", "2611.00005", "2611.00004", "2611.00003", "2611.00002", "2611.00001"]
+
+
+def test_fetch_stops_at_end_of_listing_and_dedupes_shifted_entries(monkeypatch):
+    f, calls = _fetcher(monkeypatch, [_Resp(200, _feed(["2611.00003", "2611.00002"])),
+                                      _Resp(200, _feed(["2611.00002"]))])
+    got = f.fetch_papers(max_results=100, page_size=2, page_delay=0, retry_delays=())
+    assert len(calls) == 2 and [p.id for p in got] == ["2611.00003", "2611.00002"]
+
+
+def test_later_page_failure_keeps_earlier_pages(monkeypatch):
+    f, _ = _fetcher(monkeypatch, [_Resp(200, _feed(["2611.00004", "2611.00003"])), _Resp(429, "slow down")])
+    with pytest.raises(ArxivAPIError) as ei:
+        f.fetch_papers(max_results=100, page_size=2, page_delay=0, retry_delays=())
+    assert "HTTP 429" in str(ei.value) and [p.id for p in ei.value.partial] == ["2611.00004", "2611.00003"]
+
+
+def test_retry_waits_for_retry_after(monkeypatch):
+    slept, calls = [], []
+    resp = _Resp(429, "slow down")
+    resp.headers = {"retry-after": "120"}
+    monkeypatch.setattr(arxiv.httpx, "Client", _fake_client([resp, _Resp(200, FEED_OK)], calls))
+    monkeypatch.setattr(arxiv.time, "sleep", slept.append)
+    arxiv.query_api({"search_query": "cat:cs.CV"}, retry_delays=(10,))
+    assert slept == [120]
