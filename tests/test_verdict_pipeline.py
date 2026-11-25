@@ -506,3 +506,69 @@ async def test_backfill_moves_past_a_failing_day(db, monkeypatch):
                                          runner=ClaudeRunner(client=FakeClient(_responder), use_batch=True))
     assert calls == [20, 19] and not st["running"]
     assert "boom" in st["days"]["2026-11-20"]["error"] and st["days"]["2026-11-19"] == {"reviewed": 1}
+
+
+def _deep_papers(db, *pids):
+    with Session(db) as s:
+        for pid in pids:
+            s.add(_paper(pid, title="Core paper"))
+        s.commit()
+        return s.exec(select(Paper)).all()
+
+
+@pytest.mark.asyncio
+async def test_deep_read_fills_translation_gaps_once(db, monkeypatch):
+    async def fake_units(pid, pdf_url=None):
+        return [dict(u) for u in UNITS]
+    monkeypatch.setattr(reading_service, "fetch_units", fake_units)
+
+    def partial(p):   # the batch translator stops after P1; the real-time retry gets only P2
+        sys_ = p.get("system", [{"text": ""}])[0]["text"]
+        if "You translate" in sys_:
+            user = p["messages"][0]["content"]
+            ids = [i for i in ("P1", "P2") if f"[{i}]" in user]
+            return json.dumps({"translations": [{"id": ids[0], "zh": f"{ids[0]} 译文"}]})
+        return _responder(p)
+    client = FakeClient(partial)
+    runner = ClaudeRunner(client=client, use_batch=True, poll_seconds=0)
+    await verdict_pipeline.deep_read(_deep_papers(db, "2611.00001"), runner, final=True)
+    assert verdict_pipeline.get_reading("2611.00001")["translations"] == {"P1": "P1 译文", "P2": "P2 译文"}
+    retried = [c for c in client.calls if c[0] == "stream"]
+    assert len(retried) == 1 and "[P1]" not in retried[0][1]["messages"][0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_long_papers_get_a_full_text_read(db, monkeypatch):
+    monkeypatch.setattr(verdict_pipeline, "MAX_READING_UNITS", 2)
+
+    async def fake_units(pid, pdf_url=None):
+        return [dict(u) for u in UNITS]   # 3 units > 2
+    monkeypatch.setattr(reading_service, "fetch_units", fake_units)
+    client = FakeClient(_responder)
+    runner = ClaudeRunner(client=client, use_batch=True, poll_seconds=0)
+    out = await verdict_pipeline.deep_read(_deep_papers(db, "2611.00001"), runner, final=True)
+    assert "2611.00001" in out
+    r = verdict_pipeline.get_reading("2611.00001")
+    assert r["source"] == "text" and r["units"] == [] and r["translations"] == {}
+    assert client.calls == [("batch", 1)]   # the deep read only, no translation
+
+
+@pytest.mark.asyncio
+async def test_deep_read_gives_up_after_two_failures(db, monkeypatch):
+    async def broken(pid, pdf_url=None):
+        raise RuntimeError("down")
+    monkeypatch.setattr(reading_service, "fetch_units", broken)
+    runner = ClaudeRunner(client=FakeClient(_responder), use_batch=True, poll_seconds=0)
+    papers = _deep_papers(db, "2611.00001")
+    for _ in range(2):
+        assert verdict_pipeline.select_for_deep(papers, 5) == papers
+        await verdict_pipeline.deep_read(papers, runner, final=True)
+    assert verdict_pipeline.deep_failures(papers[0]) == 2
+    assert verdict_pipeline.select_for_deep(papers, 5) == []
+
+    async def fine(pid, pdf_url=None):   # an on-demand read still works and clears the count
+        return [dict(u) for u in UNITS]
+    monkeypatch.setattr(reading_service, "fetch_units", fine)
+    await verdict_pipeline.deep_read(papers, runner, final=True)
+    with Session(db) as s:
+        assert verdict_pipeline.deep_failures(s.get(Paper, "2611.00001")) == 0

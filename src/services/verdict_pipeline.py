@@ -37,6 +37,9 @@ TASK_TRANSLATE = "translate"
 FULLTEXT_CONCURRENCY = 4
 VERDICTS = ["must_read", "worth_reading", "skim", "skip"]
 PUSH_VERDICTS = ("must_read", "worth_reading")
+DEEP_MAX_FAILURES = 2      # after this many failed deep reads a paper is left to an on-demand read
+MAX_READING_UNITS = 400    # longer papers (huge tech reports) get a full-text read without the side-by-side guide
+TRANSLATED_KINDS = ("para", "figure", "table")
 BANDS = {"must_read": (92, 99), "worth_reading": (85, 91), "skim": (60, 84), "skip": (20, 59)}
 
 # ---------------------------------------------------------------------------- schemas
@@ -312,17 +315,21 @@ async def deep_read(papers: List[Paper], runner: ClaudeRunner, log=None, batch=N
                                        "reusability": 0, "one_line_reason": "(no provisional review)"}
         try:
             units = await reading_service.fetch_units(p.id, p.pdf_url)
+            if units and len(units) > MAX_READING_UNITS:
+                await _say(log, f"  - {p.id}: {len(units)} units, reading the full text instead")
+                units = None
             text = None if units else await _full_text(p)
             paper_reqs = [deep_request(p, rv, units, text, model)] + ([translate_request(p, units)] if units else [])
         except Exception as e:  # one paper that cannot be prepared must not sink the whole batch
             await _say(log, f"  - Deep read of {p.id} skipped: {type(e).__name__}: {e}")
-            _upsert_reading(p.id, status="ERROR", error=f"prepare: {type(e).__name__}: {e}"[:500])
+            _deep_failed(p, f"prepare: {type(e).__name__}: {e}")
             continue
         ctx[p.id] = (units, rv)
         _upsert_reading(p.id, status="RUNNING", source="html" if units else "text", model=model,
                         units=reading_service.dumps(units) if units else None, error=None)
         reqs.extend(paper_reqs)
     res = await runner.run(reqs, log, batch=batch)
+    translated = await _translate_gaps(papers, ctx, res, runner, log)
     important = _important_ids(papers) if final else set()
     out = {}
     for p in papers:
@@ -331,7 +338,7 @@ async def deep_read(papers: List[Paper], runner: ClaudeRunner, log=None, batch=N
         units, rv = ctx[p.id]
         r = res.get(f"deep:{p.id}")
         if r is None or not r.ok:
-            _upsert_reading(p.id, status="ERROR", error=(r.error if r else "no result"))
+            _deep_failed(p, r.error if r else "no result")
             continue
         d = r.data
         notes = d.pop("notes", [])
@@ -339,10 +346,10 @@ async def deep_read(papers: List[Paper], runner: ClaudeRunner, log=None, batch=N
         summary = f"## TL;DR\n{tl}" if tl else ""
         if units:
             _verify_flags(notes, units)
-        tr = res.get(f"translate:{p.id}")
-        translations = {t["id"]: t["zh"] for t in (tr.data or {}).get("translations", [])} if tr and tr.ok else {}
+        translations = translated.get(p.id, {})
         score = verdict_score(d["verdict"], d)
         reason = _reason(p)
+        reason.pop("deep_failures", None)
         reason["deep"] = {"model": model, "score": score, **d}
         fields: Dict[str, Any] = dict(score_reason=json.dumps(reason, ensure_ascii=False),
                                       summary_personalized=sanitize_text(summary) or p.summary_personalized)
@@ -359,6 +366,46 @@ async def deep_read(papers: List[Paper], runner: ClaudeRunner, log=None, batch=N
                         deep=json.dumps(reason["deep"], ensure_ascii=False), error=None)
         out[p.id] = reason["deep"]
     return out
+
+
+def _translations(r) -> Dict[str, str]:
+    if r is None or not r.ok:
+        return {}
+    return {t["id"]: t["zh"] for t in (r.data or {}).get("translations", []) if t.get("id") and t.get("zh")}
+
+
+async def _translate_gaps(papers, ctx, res, runner: ClaudeRunner, log=None) -> Dict[str, Dict[str, str]]:
+    """
+    Translations per paper. The translator sometimes stops early with a well-formed but partial list;
+    the units it left out are sent once more, in real time.
+    """
+    out, again = {}, []
+    for p in papers:
+        units = ctx.get(p.id, (None, None))[0]
+        if not units:
+            continue
+        out[p.id] = _translations(res.get(f"translate:{p.id}"))
+        missing = [u for u in units if u["kind"] in TRANSLATED_KINDS and u["id"] not in out[p.id]]
+        if missing:
+            again.append(translate_request(p, missing))
+    if again:
+        await _say(log, f"  - Translating the units left out of {len(again)} paper(s) again")
+        more = await runner.run(again, log, batch=False)
+        for pid in out:
+            out[pid].update(_translations(more.get(f"translate:{pid}")))
+    return out
+
+
+def _deep_failed(p: Paper, error: str) -> None:
+    """Mark the reading as failed and count the failure; see DEEP_MAX_FAILURES."""
+    reason = _reason(p)
+    reason["deep_failures"] = int(reason.get("deep_failures", 0)) + 1
+    _save(p, score_reason=json.dumps(reason, ensure_ascii=False))
+    _upsert_reading(p.id, status="ERROR", error=(error or "")[:500])
+
+
+def deep_failures(p: Paper) -> int:
+    return int(_reason(p).get("deep_failures", 0))
 
 
 def _upsert_reading(paper_id: str, **fields) -> None:
@@ -384,12 +431,14 @@ async def _say(log, msg):
 
 
 def select_for_deep(papers: List[Paper], limit: int) -> List[Paper]:
-    """Most valuable first: must_read before worth_reading, then by score."""
+    """Most valuable first: must_read before worth_reading, then by score. Skips papers whose deep
+    read already failed DEEP_MAX_FAILURES times."""
     rank = {"must_read": 0, "worth_reading": 1}
 
     def key(p):
         v = (provisional_review(p) or {}).get("verdict")
         return (rank.get(v, 2), -(p.score or 0))
+    papers = [p for p in papers if deep_failures(p) < DEEP_MAX_FAILURES]   # failed twice: on-demand only
     return sorted(papers, key=key)[:max(0, limit)]
 
 
