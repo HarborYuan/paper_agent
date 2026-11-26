@@ -240,3 +240,8 @@ main.pa-doc > .pa-back { margin: 0 0 12px; }
   .pa-card { padding: 16px 18px; }
   .pa-section { padding: 16px 18px; }
 }
+
+/* BibTeX shown for manual copying when the browser refuses the clipboard (plain-http origins) */
+.pa-bibtex { margin-top: 14px; text-align: left; }
+.pa-bibtex-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+.pa-bibtex textarea { width: 100%; box-sizing: border-box; font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--fg); background: var(--soft); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; resize: vertical; }

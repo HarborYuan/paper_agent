@@ -62,6 +62,7 @@ def arxiv_year(paper_id: str, fallback: Optional[datetime] = None) -> int:
 
 
 def base_cite_key(authors: List[str], year: int, title: str) -> str:
+    title = re.sub(r"\\[a-zA-Z]+", " ", title or "")   # \texttt{Complex-Edit} -> Complex-Edit
     last = ""
     if authors:
         tokens = [t for t in re.split(r"\s+", _ascii(authors[0]).strip()) if t]
@@ -83,9 +84,31 @@ def _unique_key(session: Session, base: str, paper_id: str) -> str:
     return f"{base}{paper_id.replace('.', '')}"
 
 
+# Symbols arXiv titles carry as Unicode that pdflatex cannot typeset (accented letters are fine under utf8)
+_SYMBOLS = {
+    "α": "alpha", "β": "beta", "γ": "gamma", "δ": "delta", "ε": "epsilon", "ζ": "zeta", "η": "eta",
+    "θ": "theta", "ι": "iota", "κ": "kappa", "λ": "lambda", "μ": "mu", "ν": "nu", "ξ": "xi", "π": "pi",
+    "ρ": "rho", "σ": "sigma", "τ": "tau", "υ": "upsilon", "φ": "phi", "χ": "chi", "ψ": "psi", "ω": "omega",
+    "Γ": "Gamma", "Δ": "Delta", "Θ": "Theta", "Λ": "Lambda", "Ξ": "Xi", "Π": "Pi", "Σ": "Sigma",
+    "Φ": "Phi", "Ψ": "Psi", "Ω": "Omega", "∞": "infty", "×": "times", "±": "pm", "≤": "leq", "≥": "geq",
+    "≠": "neq", "≈": "approx", "→": "rightarrow", "←": "leftarrow", "↔": "leftrightarrow",
+    "⇒": "Rightarrow", "∈": "in", "∑": "sum", "∏": "prod", "∂": "partial", "∇": "nabla", "·": "cdot",
+    "ℓ": "ell", "⊕": "oplus", "⊗": "otimes", "∼": "sim", "∗": "ast",
+}
+
+
+def latex_symbols(text: str) -> str:
+    """α -> {\\alpha} inside $...$ math, $\\alpha$ outside it."""
+    parts = re.split(r"(?<!\\)\$", text)
+    for i, part in enumerate(parts):
+        math = i % 2 == 1 and i < len(parts) - 1      # an unpaired trailing $ opens no math
+        parts[i] = "".join(("{\\%s}" if math else "$\\%s$") % _SYMBOLS[c] if c in _SYMBOLS else c for c in part)
+    return "$".join(parts)
+
+
 def escape_latex(text: str) -> str:
     text = " ".join((text or "").split())
-    return re.sub(r"(?<!\\)([&%#])", r"\\\1", text)
+    return latex_symbols(re.sub(r"(?<!\\)([&%#])", r"\\\1", text))
 
 
 def format_raw(kind: str, field: str, key: str, title: str, author: str, venue: str, year: str) -> str:
@@ -402,7 +425,10 @@ def is_preprint(e: ParsedEntry) -> bool:
     if e.type in ("book", "inbook", "phdthesis", "mastersthesis", "techreport", "manual"):
         return False
     where = e.fields.get("journal") or e.fields.get("booktitle") or ""
-    return not where.strip() or bool(re.search(r"(?i)arxiv|\bcorr\b|preprint", where))
+    if where.strip():
+        return bool(re.search(r"(?i)arxiv|\bcorr\b|preprint", where))
+    # no venue at all: an arXiv paper, or something else entirely (a website, software, a dataset)
+    return e.type in PAPER_TYPES or arxiv_id_of(e) is not None
 
 
 

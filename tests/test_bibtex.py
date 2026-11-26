@@ -70,6 +70,30 @@ def test_render_by_type(session, monkeypatch):
     assert e.cite_key == "yuan2026seg"   # key never changes
 
 
+def test_unicode_symbols_become_latex(session, monkeypatch):
+    ax = Arxiv(monkeypatch)
+    ax.meta["2602.00002"] = _meta("2602.00002", title="$C^{1,α}$ Bounds for 10× Faster β-Sampling",
+                                  authors=("Ana Pérez", "Tomas Ludek"))
+    e = b.get_entries(session, ["2602.00002"])["entries"][0]
+    out = b.render(e)
+    assert "{{$C^{1,{\\alpha}}$ Bounds for 10$\\times$ Faster $\\beta$-Sampling}}" in out
+    assert "Ana Pérez" in out                    # accented names are fine under utf8 and stay as they are
+    assert b.escape_latex("Costs \\$5 & α") == "Costs \\$5 \\& $\\alpha$"
+
+
+def test_cite_key_skips_latex_commands():
+    assert b.base_cite_key(["Mira Testwood"], 2025, "$\\texttt{Complex-Edit}$: Editing Benchmark") == "testwood2025complex"
+    assert b.base_cite_key(["Mira Testwood"], 2025, "\\textsc{Loom}: Weaving Tokens") == "testwood2025loom"
+
+
+def test_website_misc_is_not_a_preprint():
+    misc = b.parse_bibtex("@misc{toolsite, title={ToolKit}, howpublished={\\url{https://example.org}}, note={2026}}")[0]
+    data = b.parse_bibtex("@misc{dataset, title={Some Data}, author={Q. Person}, year={2025}}")[0]
+    arx = b.parse_bibtex("@misc{m, title={T}, eprint={2601.00010}, archivePrefix={arXiv}, year={2026}}")[0]
+    bare = b.parse_bibtex("@article{a, title={T}, author={Q}, year={2026}}")[0]
+    assert [b.is_preprint(x) for x in (misc, data, arx, bare)] == [False, False, True, True]
+
+
 # ---------------------------------------------------------------------------
 # Library
 # ---------------------------------------------------------------------------
@@ -267,8 +291,7 @@ def test_fix_bibtex_cuts_published_entries_to_four_fields(session, monkeypatch):
         {"cite_key": "he2016deep", "dropped": ["doi", "pages", "publisher", "url"]},
         {"cite_key": "ren2017faster", "dropped": ["number", "pages", "volume"]},
         {"cite_key": "wrongtype2020", "dropped": []}]
-    assert res["changes"] == [] and res["needs_check"] == [] and res["no_arxiv_id"] == [
-        {"cite_key": "site", "title": "A Website"}]
+    assert res["changes"] == [] and res["needs_check"] == [] and res["no_arxiv_id"] == []   # a website is no preprint
     assert b.fix_bibtex(session, out)["bibtex"] == out
 
 

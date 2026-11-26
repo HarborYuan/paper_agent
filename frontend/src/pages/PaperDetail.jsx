@@ -11,6 +11,7 @@ import AuthorList from '../components/AuthorList';
 import RelatedPapers from '../components/RelatedPapers';
 import { companyLogo } from '../lib/companyLogo';
 import { VERDICT_LABEL, finalVerdict } from '../lib/papers';
+import { copyText } from '../lib/clipboard';
 
 const API_URL = '/api'; // All backend endpoints live under /api (same origin)
 const BUSY = ['STARTING', 'PENDING', 'RUNNING'];
@@ -50,6 +51,7 @@ const PaperDetail = () => {
     const [error, setError] = useState(null);
     const [bibState, setBibState] = useState('idle'); // idle | loading | copied | error
     const [bibJournal, setBibJournal] = useState(null);
+    const [bibText, setBibText] = useState(null);   // shown for manual copying when the browser refuses
     const [deepState, setDeepState] = useState('NONE'); // NONE | PENDING | RUNNING | DONE | ERROR | STARTING
     const pollRef = useRef(null);
 
@@ -112,10 +114,15 @@ const PaperDetail = () => {
         setBibState('loading');
         try {
             const res = await axios.get(`${API_URL}/bibtex/${id}/entry`);
-            await navigator.clipboard.writeText(res.data.bibtex);
             setBibJournal(res.data.status === 'published' ? `${res.data.venue} ${res.data.year}` : null);
-            setBibState('copied');
-            setTimeout(() => setBibState('idle'), 2500);
+            if (await copyText(res.data.bibtex)) {
+                setBibText(null);
+                setBibState('copied');
+                setTimeout(() => setBibState('idle'), 2500);
+            } else {
+                setBibText(res.data.bibtex);
+                setBibState('idle');
+            }
         } catch (err) {
             console.error(err);
             setBibState('error');
@@ -128,7 +135,10 @@ const PaperDetail = () => {
         setLoading(true);
         setError(null);
         fetchPaper()
-            .catch(err => { setError('Failed to load paper details.'); console.error(err); })
+            .catch(err => {
+                setError(err.response?.status === 404 ? 'notfound' : 'Failed to load paper details.');
+                console.error(err);
+            })
             .finally(() => setLoading(false));
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [id]);
@@ -144,9 +154,46 @@ const PaperDetail = () => {
         else window.close();
     };
 
+    const bibButton = (
+        <button type="button" onClick={handleCopyBibtex} disabled={bibState === 'loading'} className="pa-btn"
+            title="Copy BibTeX (with the venue once it has been confirmed as published)">
+            {bibState === 'copied' ? <Check size={14} /> : <Quote size={14} />}
+            {bibState === 'loading' ? 'Loading…'
+                : bibState === 'copied' ? `Copied${bibJournal ? ` (${bibJournal})` : ''}`
+                : bibState === 'error' ? 'BibTeX failed'
+                : 'BibTeX'}
+        </button>
+    );
+    const bibPanel = bibText && (
+        <div className="pa-bibtex">
+            <div className="pa-bibtex-head">
+                <span>Your browser blocked automatic copying here. Select the entry and copy it.</span>
+                <button type="button" className="pa-btn" onClick={() => setBibText(null)}>Close</button>
+            </div>
+            <textarea readOnly value={bibText} rows={Math.min(14, bibText.split('\n').length + 1)}
+                onFocus={e => e.target.select()} autoFocus />
+        </div>
+    );
+
     let body;
     if (loading) {
         body = <div className="pa-sentinel"><RefreshCw className="animate-spin" size={22} /></div>;
+    } else if (error === 'notfound') {
+        // e.g. an arXiv id that is only in the BibTeX library
+        body = (
+            <div className="pa-empty">
+                <h3>{id} is not in the library</h3>
+                <p>The agent has not fetched this paper. You can still open it on arXiv or copy its BibTeX.</p>
+                <div className="pa-controls pa-actions" style={{ justifyContent: 'center' }}>
+                    <a className="pa-btn" href={`https://arxiv.org/abs/${id}`} target="_blank" rel="noopener noreferrer">
+                        <ExternalLink size={14} /> arXiv
+                    </a>
+                    {bibButton}
+                    <button type="button" className="pa-btn" onClick={goBack}>Go back</button>
+                </div>
+                {bibPanel}
+            </div>
+        );
     } else if (error || !paper) {
         body = (
             <div className="pa-empty">
@@ -195,15 +242,9 @@ const PaperDetail = () => {
                         <a className="pa-btn" href={`https://arxiv.org/abs/${paper.id}`} target="_blank" rel="noopener noreferrer">
                             <ExternalLink size={14} /> arXiv
                         </a>
-                        <button type="button" onClick={handleCopyBibtex} disabled={bibState === 'loading'} className="pa-btn"
-                            title="Copy BibTeX (with the venue once it has been confirmed as published)">
-                            {bibState === 'copied' ? <Check size={14} /> : <Quote size={14} />}
-                            {bibState === 'loading' ? 'Loading…'
-                                : bibState === 'copied' ? `Copied${bibJournal ? ` (${bibJournal})` : ''}`
-                                : bibState === 'error' ? 'BibTeX failed'
-                                : 'BibTeX'}
-                        </button>
+                        {bibButton}
                     </div>
+                    {bibPanel}
                 </article>
 
                 <section className="pa-section">
