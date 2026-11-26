@@ -737,6 +737,26 @@ async def rescore_date(date: str, background_tasks: BackgroundTasks, push: bool 
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
 
+@api.post("/papers/mark-pushed")
+def mark_pushed(start: str, end: str, session: Session = Depends(get_session)):
+    """
+    Mark SUMMARIZED papers published in [start, end] (YYYY-MM-DD, inclusive) as PUSHED without sending
+    them, e.g. after a backfill whose papers should stay on the homepage only.
+    """
+    try:
+        lo = datetime.strptime(start, "%Y-%m-%d")
+        hi = datetime.strptime(end, "%Y-%m-%d") + timedelta(days=1)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+    papers = session.exec(select(Paper).where(Paper.status == "SUMMARIZED", Paper.published_at >= lo,
+                                              Paper.published_at < hi)).all()
+    for p in papers:
+        p.status = "PUSHED"
+        session.add(p)
+    session.commit()
+    return {"marked": len(papers)}
+
+
 @api.post("/papers/backfill-verdicts")
 async def backfill_verdicts(start: str, end: str, background_tasks: BackgroundTasks, deep_limit: int = 200):
     """
