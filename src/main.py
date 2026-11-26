@@ -91,7 +91,7 @@ app.add_middleware(
 )
 
 # All JSON/WebSocket endpoints live under /api so they can never collide with
-# frontend (client-side) routes such as /authors or /settings.
+# frontend (client-side) routes such as /projects or /settings.
 api = APIRouter(prefix="/api")
 
 @api.websocket("/ws/logs")

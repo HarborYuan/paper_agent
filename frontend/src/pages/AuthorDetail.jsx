@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import Masonry from 'react-masonry-css';
 import { ChevronLeft, Search, Edit2, Globe, Building, Star, Save, RefreshCw } from 'lucide-react';
@@ -29,6 +29,7 @@ const toDetails = (data) => ({
 
 const AuthorDetail = () => {
     const { name } = useParams();
+    const navigate = useNavigate();
     const [papers, setPapers] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
     const [loadError, setLoadError] = useState(null);
@@ -101,6 +102,13 @@ const AuthorDetail = () => {
         }
     };
 
+    // Back to wherever the author link was clicked; a page opened directly (new tab, typed URL) goes to the digest.
+    // React Router keeps its own entry index in history.state; window.history.length also counts other sites.
+    const goBack = () => {
+        if ((window.history.state?.idx ?? 0) > 0) navigate(-1);
+        else navigate('/');
+    };
+
     const q = searchQuery.trim().toLowerCase();
     const filteredPapers = q
         ? papers.filter(p => [p.title, p.tldr, p.abstract].some(t => t && t.toLowerCase().includes(q)))
@@ -114,7 +122,7 @@ const AuthorDetail = () => {
             <main className="pa-main">
                 <section className="pa-hero">
                     <div className="pa-kicker">
-                        <Link to="/authors" className="pa-back"><ChevronLeft size={14} />Authors</Link>
+                        <button type="button" className="pa-back" onClick={goBack}><ChevronLeft size={14} />Back</button>
                     </div>
                     <div className="pa-author-head">
                         <h1>{name}</h1>

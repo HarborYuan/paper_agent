@@ -2,14 +2,13 @@ import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import Masonry from 'react-masonry-css';
 import { RefreshCw, Plus, X, Terminal, Search, Sparkles } from 'lucide-react';
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 
 import DigestCard from './components/DigestCard';
 import TopBar from './components/TopBar';
 import Feed from './components/Feed';
 import { COLUMNS } from './lib/papers';
 import PaperDetail from './pages/PaperDetail';
-import Authors from './pages/Authors';
 import AuthorDetail from './pages/AuthorDetail';
 import SettingsPage from './pages/Settings';
 import Projects from './pages/Projects';
@@ -279,7 +278,8 @@ function App() {
       <Routes>
         <Route path="/" element={<AppContent />} />
         <Route path="/paper/:id" element={<PaperDetail />} />
-        <Route path="/authors" element={<Authors />} />
+        {/* the author ranking page was removed; old links land on the digest */}
+        <Route path="/authors" element={<Navigate to="/" replace />} />
         <Route path="/author/:name" element={<AuthorDetail />} />
         <Route path="/projects" element={<Projects />} />
         <Route path="/settings" element={<SettingsPage />} />

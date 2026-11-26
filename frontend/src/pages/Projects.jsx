@@ -1,15 +1,13 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import axios from 'axios';
 import { Link } from 'react-router-dom';
-import { ChevronRight, FolderKanban, Plus, Trash2, Save, Sparkles, X, BookOpen, Pause, Play } from 'lucide-react';
+import { Plus, Trash2, Save, Sparkles, X, BookOpen, Pause, Play } from 'lucide-react';
+import TopBar from '../components/TopBar';
 
 const API_URL = '/api';
 
-const SOURCE_CLS = {
-    seed: 'bg-purple-500/15 text-purple-300 border-purple-500/30',
-    manual: 'bg-slate-500/15 text-slate-300 border-slate-500/30',
-    auto: 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30',
-};
+// chip colours of home.css: seed = purple, auto = accent, manual = plain
+const SOURCE_CLS = { seed: 'chip b', manual: 'chip', auto: 'chip p' };
 
 const splitIds = (txt) => txt.split(/[\s,]+/).map(s => s.trim()
     .replace(/^https?:\/\/arxiv\.org\/(abs|pdf|html)\//, '').replace(/v\d+$/, '')).filter(Boolean);
@@ -35,9 +33,18 @@ export default function Projects() {
         setSuggest(null);
     }, []);
 
+    // First load: the list, then the first project
     useEffect(() => {
-        loadList().then(list => { if (list.length) open(list[0].id); }).catch(() => {});
-    }, [loadList, open]);
+        let stale = false;
+        axios.get(`${API_URL}/projects`)
+            .then(res => {
+                if (stale) return;
+                setProjects(res.data);
+                if (res.data.length) open(res.data[0].id);
+            })
+            .catch(() => {});
+        return () => { stale = true; };
+    }, [open]);
 
     const flash = (type, text) => { setMsg({ type, text }); setTimeout(() => setMsg(null), 4000); };
     const err = (e) => flash('err', e.response?.data?.detail || 'Request failed');
@@ -103,112 +110,125 @@ export default function Projects() {
         } catch (e) { err(e); }
     };
 
-    const input = 'w-full bg-slate-900/60 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-cyan-500';
-
     return (
-        <div className="min-h-screen bg-[#0f172a] text-slate-200 p-6 md:p-12 font-sans">
-            <header className="max-w-6xl mx-auto mb-8">
-                <Link to="/" className="text-cyan-400 hover:text-cyan-300 mb-6 inline-flex font-medium items-center gap-2">
-                    <ChevronRight size={16} className="rotate-180" /> Back to Digest
-                </Link>
-                <div className="flex items-center justify-between gap-4">
-                    <h1 className="text-3xl font-black text-white flex items-center gap-3"><FolderKanban className="text-cyan-400" /> Projects</h1>
-                    <button onClick={startNew} className="flex items-center gap-2 px-4 py-2 rounded-lg font-bold bg-cyan-600 hover:bg-cyan-500 text-white">
-                        <Plus size={16} /> New project
-                    </button>
-                </div>
-                <p className="text-slate-400 text-sm mt-2">New papers are matched to active projects every night (embedding similarity to the seed papers and description, plus the screening model); the reviewer confirms each match.</p>
-                {msg && <p className={`mt-3 text-sm ${msg.type === 'ok' ? 'text-green-400' : 'text-red-400'}`}>{msg.text}</p>}
-            </header>
+        <div className="pa">
+            <TopBar />
 
-            <div className="max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-[240px_1fr] gap-6">
-                <nav className="space-y-2">
-                    {projects.map(p => (
-                        <button key={p.id} onClick={() => open(p.id)}
-                            className={`w-full text-left px-4 py-3 rounded-xl border transition ${selected?.id === p.id ? 'bg-slate-800 border-cyan-500/50' : 'bg-slate-800/40 border-slate-700/50 hover:bg-slate-800'}`}>
-                            <div className="font-bold text-slate-100 flex items-center justify-between gap-2">
-                                <span className="truncate">{p.name}</span>
-                                <span className="text-xs text-slate-400 font-mono">{p.n_papers}</span>
-                            </div>
-                            {!p.active && <div className="text-[11px] text-yellow-400/80">paused</div>}
-                        </button>
-                    ))}
-                    {!projects.length && <p className="text-sm text-slate-500">No projects yet.</p>}
-                </nav>
+            <main className="pa-main">
+                <section className="pa-hero">
+                    <div className="pa-kicker">Paper collections for what you are building</div>
+                    <div className="pa-author-head">
+                        <h1>Projects</h1>
+                        <button type="button" onClick={startNew} className="pa-btn primary"><Plus size={14} /> New project</button>
+                    </div>
+                    <p className="pa-bio">New papers are matched to active projects every night (embedding similarity to the seed papers and description, plus the screening model); the reviewer confirms each match.</p>
+                    {msg && <p className={`pa-flash ${msg.type}`}>{msg.text}</p>}
+                </section>
 
-                <main className="space-y-6">
-                    {draft && (
-                        <section className="bg-slate-800/50 border border-slate-700/50 rounded-2xl p-6 space-y-3">
-                            <input className={input + ' text-lg font-bold'} placeholder="Project name" value={draft.name} onChange={e => setDraft({ ...draft, name: e.target.value })} />
-                            <textarea className={input} rows={4} placeholder="What the project does and what kind of paper it needs — recall uses this text"
-                                value={draft.description} onChange={e => setDraft({ ...draft, description: e.target.value })} />
-                            <input className={input} placeholder="Keywords, comma separated" value={draft.keywords} onChange={e => setDraft({ ...draft, keywords: e.target.value })} />
-                            {!selected && (
-                                <input className={input} placeholder="Seed arXiv ids (space or comma separated; must already be in the library)"
-                                    value={draft.seeds} onChange={e => setDraft({ ...draft, seeds: e.target.value })} />
-                            )}
-                            <div className="flex flex-wrap gap-2">
-                                <button onClick={save} className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-bold bg-cyan-600 hover:bg-cyan-500 text-white"><Save size={14} /> {selected ? 'Save' : 'Create'}</button>
-                                {selected && (
-                                    <>
-                                        <button onClick={toggleActive} className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-bold bg-slate-700 hover:bg-slate-600">
-                                            {selected.active ? <><Pause size={14} /> Pause recall</> : <><Play size={14} /> Resume recall</>}
-                                        </button>
-                                        <button onClick={remove} className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-bold bg-red-500/20 text-red-300 hover:bg-red-500/30"><Trash2 size={14} /> Delete</button>
-                                    </>
-                                )}
-                            </div>
-                        </section>
-                    )}
+                <div className="pa-proj">
+                    <nav className="pa-proj-list" aria-label="Projects">
+                        {projects.map(p => (
+                            <button key={p.id} type="button" onClick={() => open(p.id)} className={selected?.id === p.id ? 'on' : ''}>
+                                <span className="nm">{p.name}</span>
+                                <span className="n">{p.n_papers}</span>
+                                {!p.active && <span className="paused">paused</span>}
+                            </button>
+                        ))}
+                        {!projects.length && <p className="pa-meta">No projects yet.</p>}
+                    </nav>
 
-                    {selected && (
-                        <section className="bg-slate-800/50 border border-slate-700/50 rounded-2xl p-6">
-                            <div className="flex flex-wrap items-center gap-2 mb-4">
-                                <input className={input + ' flex-1 min-w-[220px]'} placeholder="Add papers: arXiv ids or URLs" value={addIds} onChange={e => setAddIds(e.target.value)} />
-                                <button onClick={() => addPapers(splitIds(addIds))} className="px-3 py-2 rounded-lg text-sm font-bold bg-slate-700 hover:bg-slate-600">Add</button>
-                                <button onClick={() => addPapers(splitIds(addIds), 'seed')} className="px-3 py-2 rounded-lg text-sm font-bold bg-purple-500/20 text-purple-300 hover:bg-purple-500/30">Add as seed</button>
-                                <button onClick={loadSuggestions} className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-bold bg-cyan-500/15 text-cyan-300 hover:bg-cyan-500/25"><Sparkles size={14} /> Suggestions</button>
-                            </div>
-
-                            {suggest && (
-                                <div className="mb-6 border border-cyan-500/20 rounded-xl p-4 bg-slate-900/40">
-                                    <div className="flex items-center justify-between mb-2">
-                                        <h3 className="font-bold text-cyan-300 text-sm">Similar papers already in the library</h3>
-                                        <button onClick={() => setSuggest(null)} className="text-slate-500 hover:text-slate-300"><X size={14} /></button>
+                    <div className="pa-proj-main">
+                        {draft && (
+                            <section className="pa-section">
+                                <h2>{selected ? 'Project' : 'New project'}</h2>
+                                <div className="pa-form flat">
+                                    <label>
+                                        <span>Name</span>
+                                        <input className="big" placeholder="Project name" value={draft.name} onChange={e => setDraft({ ...draft, name: e.target.value })} />
+                                    </label>
+                                    <label>
+                                        <span>Description</span>
+                                        <textarea rows={4} placeholder="What the project does and what kind of paper it needs — recall uses this text"
+                                            value={draft.description} onChange={e => setDraft({ ...draft, description: e.target.value })} />
+                                    </label>
+                                    <label>
+                                        <span>Keywords</span>
+                                        <input placeholder="Keywords, comma separated" value={draft.keywords} onChange={e => setDraft({ ...draft, keywords: e.target.value })} />
+                                    </label>
+                                    {!selected && (
+                                        <label>
+                                            <span>Seed papers</span>
+                                            <input placeholder="Seed arXiv ids (space or comma separated; must already be in the library)"
+                                                value={draft.seeds} onChange={e => setDraft({ ...draft, seeds: e.target.value })} />
+                                        </label>
+                                    )}
+                                    <div className="pa-row">
+                                        <button type="button" onClick={save} className="pa-btn primary"><Save size={14} /> {selected ? 'Save' : 'Create'}</button>
+                                        {selected && (
+                                            <>
+                                                <button type="button" onClick={toggleActive} className="pa-btn">
+                                                    {selected.active ? <><Pause size={14} /> Pause recall</> : <><Play size={14} /> Resume recall</>}
+                                                </button>
+                                                <button type="button" onClick={remove} className="pa-btn danger"><Trash2 size={14} /> Delete</button>
+                                            </>
+                                        )}
                                     </div>
-                                    <ul className="space-y-1.5">
-                                        {suggest.map(p => (
-                                            <li key={p.id} className="flex items-center gap-3 text-sm">
-                                                <span className="font-mono text-xs text-slate-500 w-12">{p.similarity?.toFixed(3)}</span>
-                                                <Link to={`/paper/${p.id}`} className="flex-1 text-slate-200 hover:text-cyan-400 truncate">{p.title}</Link>
-                                                <button onClick={() => addPapers([p.id])} className="text-xs px-2 py-0.5 rounded bg-slate-700 hover:bg-slate-600">Add</button>
-                                            </li>
-                                        ))}
-                                    </ul>
                                 </div>
-                            )}
+                            </section>
+                        )}
 
-                            <ul className="divide-y divide-slate-700/50">
-                                {selected.papers.map(p => (
-                                    <li key={p.id} className="py-3 flex items-start gap-3">
-                                        <span className={`shrink-0 mt-0.5 text-[10px] uppercase font-bold px-2 py-0.5 rounded border ${SOURCE_CLS[p.project_source] || SOURCE_CLS.manual}`}>{p.project_source}</span>
-                                        <div className="flex-1 min-w-0">
-                                            <Link to={`/paper/${p.id}`} className="font-semibold text-slate-100 hover:text-cyan-400">{p.title}</Link>
-                                            <div className="text-xs text-slate-500 mt-0.5">
-                                                {p.id} · {(p.published_at || '').slice(0, 10)}{p.score != null ? ` · score ${p.score}` : ''}{p.main_affiliation ? ` · ${p.main_affiliation}` : ''}
-                                            </div>
-                                            {p.project_reason && <div className="text-xs text-cyan-300/80 mt-1">{p.project_reason}</div>}
+                        {selected && (
+                            <section className="pa-section">
+                                <h2>Papers <small className="pa-meta">{selected.papers.length}</small></h2>
+                                <div className="pa-addrow">
+                                    <input className="pa-input" placeholder="Add papers: arXiv ids or URLs" value={addIds} onChange={e => setAddIds(e.target.value)} />
+                                    <div className="pa-row">
+                                        <button type="button" onClick={() => addPapers(splitIds(addIds))} className="pa-btn">Add</button>
+                                        <button type="button" onClick={() => addPapers(splitIds(addIds), 'seed')} className="pa-btn">Add as seed</button>
+                                        <button type="button" onClick={loadSuggestions} className="pa-btn"><Sparkles size={14} /> Suggestions</button>
+                                    </div>
+                                </div>
+
+                                {suggest && (
+                                    <div className="pa-suggest">
+                                        <div className="hd">
+                                            <h3><Sparkles size={14} /> Similar papers already in the library</h3>
+                                            <button type="button" onClick={() => setSuggest(null)} title="Close"><X size={15} /></button>
                                         </div>
-                                        <a href={`/read/${p.id}`} target="_blank" rel="noreferrer" title="Reading page" className="text-slate-500 hover:text-cyan-400 mt-1"><BookOpen size={15} /></a>
-                                        <button onClick={() => dropPaper(p.id)} title="Remove from project" className="text-slate-600 hover:text-red-400 mt-1"><X size={15} /></button>
-                                    </li>
-                                ))}
-                                {!selected.papers.length && <li className="py-6 text-sm text-slate-500">No papers yet — add seeds or use Suggestions.</li>}
-                            </ul>
-                        </section>
-                    )}
-                </main>
-            </div>
+                                        <ul>
+                                            {suggest.map(p => (
+                                                <li key={p.id}>
+                                                    <span className="m" title="Embedding similarity">{p.similarity?.toFixed(3)}</span>
+                                                    <Link to={`/paper/${p.id}`} className="t">{p.title}</Link>
+                                                    <button type="button" onClick={() => addPapers([p.id])} className="pa-btn small">Add</button>
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    </div>
+                                )}
+
+                                <ul className="pa-proj-papers">
+                                    {selected.papers.map(p => (
+                                        <li key={p.id}>
+                                            <span className={SOURCE_CLS[p.project_source] || SOURCE_CLS.manual}>{p.project_source}</span>
+                                            <div className="txt">
+                                                <Link to={`/paper/${p.id}`} className="t">{p.title}</Link>
+                                                <div className="pa-meta">
+                                                    {p.id} · {(p.published_at || '').slice(0, 10)}{p.score != null ? ` · score ${p.score}` : ''}{p.main_affiliation ? ` · ${p.main_affiliation}` : ''}
+                                                </div>
+                                                {p.project_reason && <div className="why">{p.project_reason}</div>}
+                                            </div>
+                                            <a href={`/read/${p.id}`} target="_blank" rel="noreferrer" title="Reading page" className="ic"><BookOpen size={15} /></a>
+                                            <button type="button" onClick={() => dropPaper(p.id)} title="Remove from project" className="ic del"><X size={15} /></button>
+                                        </li>
+                                    ))}
+                                    {!selected.papers.length && <li className="pa-meta">No papers yet — add seeds or use Suggestions.</li>}
+                                </ul>
+                            </section>
+                        )}
+                    </div>
+                </div>
+            </main>
         </div>
     );
 }

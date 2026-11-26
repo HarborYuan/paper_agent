@@ -5,7 +5,7 @@
   </p>
   <p align="center">
     <a href="https://github.com/HarborYuan/paper_agent/actions/workflows/docker-publish.yml"><img src="https://github.com/HarborYuan/paper_agent/actions/workflows/docker-publish.yml/badge.svg" alt="Docker Build"></a>
-    <img src="https://img.shields.io/badge/version-2.1.4-cyan" alt="Version">
+    <img src="https://img.shields.io/badge/version-2.1.5-cyan" alt="Version">
     <img src="https://img.shields.io/badge/python-3.13+-blue?logo=python&logoColor=white" alt="Python">
     <img src="https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white" alt="FastAPI">
     <img src="https://img.shields.io/badge/React-61DAFB?logo=react&logoColor=black" alt="React">
@@ -33,7 +33,6 @@
 | 🌐 **Web UI** | Beautiful dark-theme interface with day-by-day infinite scroll |
 | 🎚️ **Adjustable Threshold** | Filter papers by score with a live slider |
 | 🔄 **On-demand deep read** | Deep-read any paper from its page or over MCP |
-| 🏆 **Author Rankings** | Browse top authors ranked by paper count with time-range filtering |
 | 👤 **Author Detail** | Edit author bio/website/affiliation and mark implementation authors for score boosting |
 | 🐳 **Docker Ready** | Single-container deployment with LinuxServer.io-style config |
 
@@ -46,6 +45,7 @@ Names are reserved for feature milestones; patch releases intentionally have no 
 
 | Version | Name | Highlights |
 |---------|------|------------|
+| **2.1.5** | *UI Update* | Author ranking page removed (`/authors` now redirects home; author pages, their links and every `/api/authors/*` endpoint stay; the author page's back link returns to the previous page); Projects, Settings and the Logs dialog rebuilt in the new look, light and dark, with unchanged behaviour |
 | **2.1.4** | *UI Update* | BibTeX: the copy button works on plain-http addresses such as `http://nas:8000` (falls back to a legacy copy, or shows the entry to copy by hand); a paper page for an id outside the library offers arXiv and BibTeX instead of an error; Unicode symbols in titles (α, ×, →, …) are written as LaTeX so pdflatex compiles them; new cite keys skip LaTeX commands (`\texttt{Complex-Edit}` -> `…complex`); `fix_bibtex` no longer reports a website `@misc` as a preprint without an arXiv id |
 | **2.1.3** | *UI Update* | Paper page rebuilt in the new look (shared top bar, serif title, verdict pill, score editable on the page, company logo, every author linked, TL;DR, per-stage scoring, related papers), light and dark; score editor shared by home, author and paper pages; Meta logo shrunk from 365 KB to 4 KB (vector gradient instead of an embedded PNG) |
 | **2.1.2** | *UI Update* | Author page rebuilt with the home-page cards and a shared top bar, loading light card records (`GET /api/authors/{name}/papers?view=card`); company logos back on the new cards (home, search, author page), readable in light and dark |
