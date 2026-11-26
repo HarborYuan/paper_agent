@@ -4,7 +4,7 @@ import json
 from fastapi import FastAPI, APIRouter, BackgroundTasks, HTTPException, Depends, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from sqlmodel import Session, select, SQLModel, func
 from sqlalchemy.orm import defer
@@ -966,16 +966,24 @@ def get_author_details(author_name: str, session: Session = Depends(get_session)
     return author
 
 @api.get("/authors/{author_name}/papers", response_model=List[Paper])
-def list_papers_by_author(author_name: str, days: Optional[int] = Query(None, description="Filter papers published within the last N days"), session: Session = Depends(get_session)):
+def list_papers_by_author(
+    author_name: str,
+    days: Optional[int] = Query(None, description="Filter papers published within the last N days"),
+    view: Optional[str] = Query(None, description="'card': the light records the author page renders (no full text)"),
+    session: Session = Depends(get_session),
+):
     """
     Get all papers for a specific author.
     Optionally filter to papers published within the last N days.
+    The default returns full Paper records; view=card returns the light home-page card records.
     """
     search_term = json.dumps(author_name) # Foo"Bar name
     query = select(Paper).where(Paper.authors.contains(search_term))
     if days is not None:
         cutoff = datetime.now() - timedelta(days=days)
         query = query.where(Paper.published_at >= cutoff)
+    if view == "card":
+        query = query.options(defer(Paper.full_text))
     papers = session.exec(query).all()
     
     # Refine filter to ensure exact match (not a substring of another author)
@@ -985,7 +993,11 @@ def list_papers_by_author(author_name: str, days: Optional[int] = Query(None, de
     
     # Sort by score desc, published_at desc
     filtered_papers.sort(key=lambda x: (x.score or 0, x.published_at), reverse=True)
-    
+
+    if view == "card":
+        # JSONResponse skips the List[Paper] response model, which only describes the default records
+        badges = reading_badges(session, [p.id for p in filtered_papers])
+        return JSONResponse([card_paper(p, badges.get(p.id)) for p in filtered_papers])
     return filtered_papers
 
 @api.get("/profile")

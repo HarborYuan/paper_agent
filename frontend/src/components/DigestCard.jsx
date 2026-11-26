@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import axios from 'axios';
 import { Check, X } from 'lucide-react';
 import AuthorList from './AuthorList';
+import { companyLogo } from '../lib/companyLogo';
 
 const API_URL = '/api';
 const VERDICT_LABEL = { must_read: 'Must Read', worth_reading: 'Worth Reading', skim: 'Skim', skip: 'Skip' };
@@ -39,6 +40,7 @@ const DigestCard = ({ paper, similarity }) => {
     };
 
     const cats = paper.all_categories || [];
+    const logo = companyLogo(paper.main_company);
     const rd = paper.reading || {};
     const fl = rd.flags || {};
     const scoreTitle = paper.user_score != null
@@ -85,6 +87,7 @@ const DigestCard = ({ paper, similarity }) => {
                     {paper.pdf_url && <a href={paper.pdf_url} target="_blank" rel="noopener noreferrer">PDF</a>}
                     <a href={`https://arxiv.org/abs/${paper.id}`} target="_blank" rel="noopener noreferrer">arXiv</a>
                 </span>
+                {logo && <img className="pa-logo" src={logo} alt={paper.main_company} title={paper.main_company} />}
             </div>
         </article>
     );

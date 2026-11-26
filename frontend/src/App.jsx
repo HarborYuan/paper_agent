@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import Masonry from 'react-masonry-css';
-import { RefreshCw, Plus, X, Terminal, Users, Settings, Search, Sparkles, FolderKanban, Star } from 'lucide-react';
-import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
+import { RefreshCw, Plus, X, Terminal, Search, Sparkles } from 'lucide-react';
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
 
 import DigestCard from './components/DigestCard';
+import TopBar from './components/TopBar';
 import Feed from './components/Feed';
 import { COLUMNS } from './lib/papers';
 import PaperDetail from './pages/PaperDetail';
@@ -168,18 +169,9 @@ function AppContent() {
     <div className="pa">
       <LogViewer isOpen={showLogs} onClose={() => setShowLogs(false)} logs={logs} onClear={() => setLogs([])} />
 
-      <div className="pa-top">
-        <div className="in">
-          <Link to="/" className="pa-brand">Paper Agent</Link>
-          <nav className="pa-nav">
-            <a href="/picks"><Star size={14} />Picks</a>
-            <Link to="/projects"><FolderKanban size={14} />Projects</Link>
-            <Link to="/authors"><Users size={14} />Authors</Link>
-            <Link to="/settings"><Settings size={14} />Settings</Link>
-            <button type="button" onClick={() => setShowLogs(true)} title="View Logs"><Terminal size={14} />Logs</button>
-          </nav>
-        </div>
-      </div>
+      <TopBar>
+        <button type="button" onClick={() => setShowLogs(true)} title="View Logs"><Terminal size={14} />Logs</button>
+      </TopBar>
 
       <main className="pa-main">
         <section className="pa-hero">

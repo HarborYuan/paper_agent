@@ -146,7 +146,7 @@ const PaperDetail = () => {
         );
     }
 
-    // Parsing logic similar to PaperCard
+    // all_categories is stored as a Python-style list string
     let tags = [];
     try {
         tags = JSON.parse(paper.all_categories.replace(/'/g, '"'));
