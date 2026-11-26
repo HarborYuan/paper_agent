@@ -36,57 +36,48 @@ const PipelineBacklog = () => {
   if (!retry.length && !gaveUp.length && !counts.length) return null;
 
   const Row = ({ x, action }) => (
-    <li className="flex items-start gap-3 py-2 border-t border-slate-700/60 first:border-t-0">
-      <div className="min-w-0 flex-1">
-        <Link to={`/paper/${x.id}`} className="text-sm font-semibold text-slate-200 hover:text-cyan-400">{x.title}</Link>
-        <div className="text-xs text-slate-500 mt-0.5">
+    <li>
+      <div className="txt">
+        <Link to={`/paper/${x.id}`}>{x.title}</Link>
+        <div className="pa-meta">
           {x.id}{VERDICT[x.verdict] ? ` · ${VERDICT[x.verdict]}` : ''}{x.failures ? ` · failed ${x.failures}×` : ''}
         </div>
-        {x.error && <div className="text-xs text-amber-400/90 mt-0.5 break-words">{x.error}</div>}
+        {x.error && <div className="err">{x.error}</div>}
       </div>
       {action && (
         busy[x.id]
-          ? <span className="text-xs text-slate-400 whitespace-nowrap pt-1">{busy[x.id]}</span>
-          : <button onClick={() => deepRead(x.id)}
-              className="flex items-center gap-1 text-xs font-bold px-2.5 py-1 rounded-md bg-slate-700 text-slate-200 hover:bg-slate-600 whitespace-nowrap">
-              <BookOpen size={13} /> Deep read
-            </button>
+          ? <span className="pa-meta">{busy[x.id]}</span>
+          : <button type="button" onClick={() => deepRead(x.id)} className="pa-btn small"><BookOpen size={13} /> Deep read</button>
       )}
     </li>
   );
 
   return (
-    <section className="max-w-7xl mx-auto mb-8 rounded-2xl border border-amber-500/30 bg-amber-500/5">
-      <button onClick={() => setOpen(o => !o)} className="w-full flex items-center gap-2 px-5 py-3 text-left">
-        {open ? <ChevronDown size={18} className="text-amber-400" /> : <ChevronRight size={18} className="text-amber-400" />}
-        <AlertTriangle size={18} className="text-amber-400" />
-        <span className="font-bold text-amber-200">Still to do</span>
-        <span className="text-sm text-slate-400">
+    <section className="pa-panel">
+      <button type="button" onClick={() => setOpen(o => !o)} className="pa-panel-head">
+        {open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+        <AlertTriangle size={16} className="warn" />
+        <span className="title">Still to do</span>
+        <span className="pa-meta">
           {[retry.length && `${retry.length} retrying`, gaveUp.length && `${gaveUp.length} need a manual deep read`, ...counts].filter(Boolean).join(' · ')}
         </span>
       </button>
       {open && (
-        <div className="px-5 pb-4 space-y-4">
+        <div className="pa-panel-body">
           {retry.length > 0 && (
             <div>
-              <h3 className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-slate-400 mb-1">
-                <RotateCcw size={13} /> Deep read failed — retried on the next run
-              </h3>
+              <h4><RotateCcw size={12} /> Deep read failed — retried on the next run</h4>
               <ul>{retry.map(x => <Row key={x.id} x={x} action />)}</ul>
             </div>
           )}
           {gaveUp.length > 0 && (
             <div>
-              <h3 className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-slate-400 mb-1">
-                <AlertTriangle size={13} /> Deep read failed repeatedly — no more automatic retries
-              </h3>
+              <h4><AlertTriangle size={12} /> Deep read failed repeatedly — no more automatic retries</h4>
               <ul>{gaveUp.map(x => <Row key={x.id} x={x} action />)}</ul>
             </div>
           )}
           {counts.length > 0 && (
-            <p className="flex items-center gap-1.5 text-sm text-slate-400">
-              <Hourglass size={14} /> Queued for the next run: {counts.join('; ')}.
-            </p>
+            <p className="pa-meta"><Hourglass size={13} /> Queued for the next run: {counts.join('; ')}.</p>
           )}
         </div>
       )}

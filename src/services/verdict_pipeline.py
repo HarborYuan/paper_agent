@@ -19,6 +19,7 @@ from datetime import datetime
 from types import SimpleNamespace
 from typing import Any, Dict, Iterable, List, Optional
 
+from sqlalchemy.orm import defer
 from sqlmodel import Session, select
 
 from src.config import settings
@@ -639,8 +640,9 @@ def backlog() -> Dict[str, Any]:
     screen_pending - not screened yet (failed, deferred, or fetched since the last run)
     """
     with Session(engine) as s:
-        scored = s.exec(select(Paper).where(Paper.status == "SCORED", Paper.user_score == None)).all()  # noqa: E711
-        new = s.exec(select(Paper).where(Paper.status == "NEW", Paper.user_score == None)).all()  # noqa: E711
+        light = defer(Paper.full_text)
+        scored = s.exec(select(Paper).where(Paper.status == "SCORED", Paper.user_score == None).options(light)).all()  # noqa: E711
+        new = s.exec(select(Paper).where(Paper.status == "NEW", Paper.user_score == None).options(light)).all()  # noqa: E711
         ids = [p.id for p in scored]
         readings = {r.paper_id: r for r in s.exec(select(PaperReading).where(PaperReading.paper_id.in_(ids))).all()} if ids else {}
 

@@ -1,15 +1,33 @@
 """Server-rendered bilingual reading page (/read/{paper_id}): original English units on the left,
 the Chinese gist and full translation on the right, questionable / big claims highlighted in place."""
 import html
-from src.services.paper_views import summary_tldr
+from src.services.paper_views import summary_tldr, short_authors
 import json
 import re
 from typing import Dict, List, Optional
+from urllib.parse import quote
 
 VL = {"must_read": "Must Read", "worth_reading": "Worth Reading", "skim": "Skim", "skip": "Skip"}
 FK = {"questionable": ("Questionable", "q"), "big_claim": ("Big claim", "b")}
 e = lambda s: html.escape(s or "", quote=True)
 norm = lambda t: re.sub(r"\s+", " ", t or "").strip()
+
+
+def author_link(name: str) -> str:
+    """An author's name linking to their page in the app (/author/<url-encoded name>)."""
+    return f"<a class='au' href='/author/{quote(name, safe='')}'>{e(name)}</a>"
+
+
+def authors_html(names: List[str], short: bool = False) -> str:
+    """Comma-separated author links; `short` keeps the first four and always the last one."""
+    if not short:
+        return ", ".join(author_link(a) for a in names)
+    shown, hidden, last = short_authors(names)
+    out = ", ".join(author_link(a) for a in shown)
+    if last is not None:
+        rest = ", ".join(names[len(shown):-1])
+        out += f", <span class='more' title='{e(rest)}'>… +{hidden}</span>, {author_link(last)}"
+    return out
 
 KATEX = """<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
 <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
@@ -39,7 +57,8 @@ main{max-width:1240px;margin:0 auto;padding:28px 24px 120px}
 .hero{background:var(--paper);border:1px solid var(--line);border-radius:16px;padding:28px 32px;margin-bottom:28px}
 .hero h1{font:600 28px/1.3 Georgia,"Times New Roman",serif;margin:6px 0 10px;letter-spacing:-.01em}
 .kicker{font-size:13px;color:var(--muted);display:flex;gap:10px;flex-wrap:wrap;align-items:center}
-.authors{font-size:14.5px;line-height:1.6;margin-bottom:4px}.authors .more{color:var(--muted)}
+.authors{font-size:14.5px;line-height:1.6;margin-bottom:4px}.more{color:var(--muted);cursor:help}
+a.au{color:inherit}a.au:hover{color:var(--accent)}
 .aff{font-size:13.5px;color:var(--muted);margin-bottom:14px}
 .tldr{font-size:15.5px;line-height:1.75;margin:0 0 18px;padding:12px 16px;background:var(--soft);border-radius:10px}
 .pill{display:inline-block;padding:2px 11px;border-radius:999px;font:600 12.5px/1.6 -apple-system,sans-serif;letter-spacing:.02em}
@@ -175,8 +194,6 @@ def render(paper, reading: Optional[dict], fig_base: str = "/api/figures/") -> s
     final = deep or s2
     dims = lambda o: f"rel {o.get('relevance', '–')} · nov {o.get('novelty', '–')} · evi {o.get('evidence', '–')} · reuse {o.get('reusability', '–')}"
     pill = lambda v: f"<span class='pill {v}'>{VL.get(v, v)}</span>" if v else "<span class='d'>—</span>"
-    authors = paper.authors_list
-    authors_html = e(", ".join(authors[:14])) + (f" <span class='more'>+{len(authors) - 14} more</span>" if len(authors) > 14 else "")
     try:
         affs = json.loads(paper.affiliations) if paper.affiliations else []
     except json.JSONDecodeError:
@@ -259,7 +276,7 @@ def render(paper, reading: Optional[dict], fig_base: str = "/api/figures/") -> s
 <section class="hero">
 <div class="kicker">{pill(final.get('verdict'))}<a href="https://arxiv.org/abs/{e(paper.id)}">arXiv {e(paper.id)}</a><a href="https://arxiv.org/pdf/{e(paper.id)}">PDF</a><a href="https://arxiv.org/html/{e(paper.id)}">HTML</a><span>score {paper.score if paper.score is not None else '–'}</span></div>
 <h1>{e(paper.title)}</h1>
-<div class="authors">{authors_html}</div>
+<div class="authors">{authors_html(paper.authors_list)}</div>
 <div class="aff">{e(' · '.join(affs))}</div>
 {('<div class="kicker" style="margin:-8px 0 14px">' + ''.join(f'<a class="pill worth_reading" href="/projects">{e(n)}</a>' for n in _projects(paper.id)) + '</div>') if _projects(paper.id) else ''}
 {f'<p class="tldr">{e(summary_tldr(paper.summary_personalized, 600))}</p>' if paper.summary_personalized else ''}
@@ -277,9 +294,12 @@ def render(paper, reading: Optional[dict], fig_base: str = "/api/figures/") -> s
 PICKS_CSS = """
 .day{font:600 20px Georgia,serif;margin:34px 0 12px;display:flex;align-items:baseline;gap:10px}
 .day small{font:13px -apple-system,sans-serif;color:var(--muted)}
-.pick{display:block;background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:18px 22px;margin:0 0 12px;color:var(--fg)}
-.pick:hover{border-color:var(--accent);text-decoration:none}
+.pick{position:relative;display:block;background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:18px 22px;margin:0 0 12px;color:var(--fg)}
+.pick:hover{border-color:var(--accent)}
 .pick h3{font:600 18px/1.4 Georgia,serif;margin:6px 0 4px}
+.pick h3 a{color:inherit}.pick h3 a:hover{text-decoration:none}
+.pick h3 a::after{content:"";position:absolute;inset:0;border-radius:14px}
+.pick .meta a.au,.pick .more{position:relative;z-index:1}
 .pick .meta{font-size:13px;color:var(--muted)}
 .pick .tl{font-size:15px;line-height:1.75;margin:8px 0 6px}
 .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
@@ -302,8 +322,6 @@ def render_picks(days: List[tuple], readings: Dict[str, dict], projects: Dict[st
                 r = {}
             fin = r.get("deep") or r.get("stage2") or {}
             v = fin.get("verdict")
-            au = p.authors_list
-            authors = ", ".join(au[:4]) + (f" +{len(au) - 4}" if len(au) > 4 else "")
             rd = readings.get(p.id) or {}
             chips = []
             if rd.get("status") == "DONE":
@@ -315,9 +333,9 @@ def render_picks(days: List[tuple], readings: Dict[str, dict], projects: Dict[st
                 chips.append(f"<span class='chip b'>{fl['b']} big claim</span>")
             chips += [f"<span class='chip p'>{e(n)}</span>" for n in projects.get(p.id, [])]
             tl = summary_tldr(p.summary_personalized, 400) if p.summary_personalized else fin.get("one_line_reason", "")
-            cards.append(f"""<a class="pick" href="/read/{e(p.id)}"><span class="pill {v or ''}">{VL.get(v, '–')}</span>
+            cards.append(f"""<article class="pick"><span class="pill {v or ''}">{VL.get(v, '–')}</span>
 <span class="meta"> &nbsp;{e(p.id)} · {e(p.main_affiliation or '')}</span>
-<h3>{e(p.title)}</h3><div class="meta">{e(authors)}</div><div class="tl">{e(tl)}</div><div class="chips">{''.join(chips)}</div></a>""")
+<h3><a href="/read/{e(p.id)}">{e(p.title)}</a></h3><div class="meta">{authors_html(p.authors_list, short=True)}</div><div class="tl">{e(tl)}</div><div class="chips">{''.join(chips)}</div></article>""")
         blocks.append(f"<div class='day'>{e(day)} <small>{len(papers)} picks</small></div>" + "".join(cards))
     if not blocks:
         blocks.append("<div class='notice'>No Must Read / Worth Reading papers in this range yet.</div>")

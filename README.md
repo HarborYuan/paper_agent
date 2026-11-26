@@ -5,7 +5,7 @@
   </p>
   <p align="center">
     <a href="https://github.com/HarborYuan/paper_agent/actions/workflows/docker-publish.yml"><img src="https://github.com/HarborYuan/paper_agent/actions/workflows/docker-publish.yml/badge.svg" alt="Docker Build"></a>
-    <img src="https://img.shields.io/badge/version-2.0.0-cyan" alt="Version">
+    <img src="https://img.shields.io/badge/version-2.1.0-cyan" alt="Version">
     <img src="https://img.shields.io/badge/python-3.13+-blue?logo=python&logoColor=white" alt="Python">
     <img src="https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white" alt="FastAPI">
     <img src="https://img.shields.io/badge/React-61DAFB?logo=react&logoColor=black" alt="React">
@@ -46,6 +46,7 @@ Names are reserved for feature milestones; patch releases intentionally have no 
 
 | Version | Name | Highlights |
 |---------|------|------------|
+| **2.1.0** | *UI Update* | Home page rebuilt in the look of the reading and Picks pages (serif headings, paper cards with verdict pills, light / dark), and made fast: one call per publication day (`GET /api/papers/feed`) with light card records — no full text, only the papers above the score filter, days without any skipped on the server — instead of every paper of the day with its full text (a busy day was ~12 MB); index on `paper.published_at` (migration 006). Every author on the reading page; wherever a list is still shortened (home cards, Picks, the Lark digest) the last author stays visible (`A, B, C, D, … +N, Z`). Author names link to the author page on the home cards, the paper page, the reading page and Picks (Picks cards restructured so links never nest). Fixed: names with an apostrophe broke the author list on the paper page |
 | **2.0.0** | *Pipeline Update* | **Breaking.** Scoring rebuilt on Claude: screen (relevance tier) → review (verdict Must Read / Worth Reading / Skim / Skip, relevance · novelty · evidence · reusability, affiliations) → deep read (final verdict, TL;DR, paragraph gists, claim flags) + Chinese translation; verdicts map onto the 0-100 score (Worth Reading 85-91, Must Read 92-99) so filters and the push threshold keep working. Claude API with the Message Batches API and prompt caching, or OpenRouter's Anthropic-compatible endpoint (`CHAT_PROVIDER`); per-cycle spend cap (`CLAUDE_MONTHLY_BUDGET`) and a nightly deep-read cap. Bilingual reading page `/read/<id>` (arXiv HTML split into paragraphs, broken TikZ figures / scaled tables cropped from the PDF), Daily Picks `/picks`, Projects (embedding + screen recall, reviewer confirmation; web page + 7 MCP tools), hot papers from Hugging Face Daily Papers, deep-read API + MCP tools. Embeddings generated on ingestion and caught up nightly. **Removed:** the two-stage pipeline and its settings, long structured summaries (TL;DR only), daily / weekly / monthly reports, cost estimates, the legacy `OPENAI_API_KEY` / `OPENAI_BASE_URL`. Old scores, summaries and reviews are kept and reused |
 | **1.3.0** | *Bib2 Update* | `fix_bibtex` now cuts every paper entry of a pasted `.bib` down to four fields (title / author / booktitle or journal / year): published `@inproceedings` / `@article` entries lose pages, volume, publisher, doi, url, …, unpublished arXiv entries become `journal = {arXiv preprint arXiv:<id>}`, values are copied as written (`@string` macros kept), other entry kinds stay untouched; official author lists — `set_bibtex_status` takes `authors` for a published paper and from then on they replace the arXiv list in library entries and `fix_bibtex` rewrites (new `bibentry.published_authors`, migration 005); stricter venue naming in the MCP tool descriptions (bare conference abbreviations, `NIPS` up to 2017 / `NeurIPS` from 2018, no extra fields); `skills/fix-bib` — a stateless Claude Code skill that does the same one-shot fix without a server, for collaborators |
 | **1.2.1** | — | BibTeX titles wrapped in double braces (`title = {{...}}`) so styles that lowercase titles keep acronyms like SAM / OMG-Seg / 3D; MCP install docs now recommend pinning to a release tag via `uvx --from git+...@vX.Y.Z` |
@@ -235,7 +236,7 @@ All endpoints are served under the **`/api`** prefix (e.g. `GET /api/papers`) so
 |--------|----------|-------------|
 | `POST` | `/api/run` | Trigger fetch + score + summarize cycle |
 | `GET` | `/api/papers` | List papers (`?date=YYYY-MM-DD`, `?status=`, `?ids=a,b,c`, `?compact=true`) |
-| `GET` | `/api/papers/search` | Search papers by title (`?q=query`, `?compact=true`) |
+| `GET` | `/api/papers/search` | Search papers by title (`?q=query`, `?compact=true`, `?view=card` for the home-page card records) |
 | `GET` | `/api/papers/{id}` | Get single paper details |
 | `POST` | `/api/papers/add` | Add paper by arXiv ID or URL |
 | `POST` | `/api/papers/{id}/deep-read?force=` | Deep read now (real time): review if needed, final verdict, TL;DR, paragraph notes, claim flags, translation |
@@ -247,6 +248,7 @@ All endpoints are served under the **`/api`** prefix (e.g. `GET /api/papers`) so
 | `POST` / `DELETE` | `/api/projects/{key}/papers` · `/api/projects/{key}/papers/{id}` | Add papers (`manual` or `seed`) / remove one |
 | `GET` | `/api/projects/{key}/suggestions?k=` | Library papers closest to the project that are not in it yet |
 | `GET` | `/api/claude/budget` · `/api/claude/models` | Spend this billing cycle vs the cap · Claude models with list prices |
+| `GET` | `/api/papers/feed?before=YYYY-MM-DD&min_score=N` | Home-page feed: the newest day on or before `before` with a paper scoring ≥ `min_score`, all such papers as light card records, the day's total and `next` (the next earlier such day, `null` at the end) |
 | `GET` | `/api/papers/start-date` · `/api/papers/next-date?date=` | Pagination helpers for the day-by-day feed |
 | `GET` | `/api/papers/recent?days=&min_score=&status=&category=&limit=&compact=` | Recent papers, newest first (compact by default) |
 | `GET` | `/api/authors` | Ranked author list (optional `?days=N`) |
@@ -261,7 +263,7 @@ All endpoints are served under the **`/api`** prefix (e.g. `GET /api/papers`) so
 | `GET` | `/api/settings/llm` | Current models, gates, provider status, warnings |
 | `PUT` | `/api/settings/llm` | Update `stage1_model` / `stage2_model` / `summary_model` / `translate_model` (Claude ids) |
 | `GET` | `/api/llm/usage` | Spend: today / 7d / 30d / all-time + per task/model breakdown |
-| `GET` | `/api/papers/semantic-search?q=&limit=&days=&min_score=&category=&compact=` | Embedding search; returns papers with cosine `similarity` |
+| `GET` | `/api/papers/semantic-search?q=&limit=&days=&min_score=&category=&compact=&view=` | Embedding search; returns papers with cosine `similarity` |
 | `POST` | `/api/papers/semantic-search` | Agent-friendly search: `{"query"?, "paper_ids"? (seeds), "days"/"since"/"until", "min_score", "status", "category", "exclude_ids", "limit", "compact"}` |
 | `GET` | `/api/papers/{id}/related?k=` | Nearest neighbours of a paper (`available=false` until it has a vector) |
 | `GET` / `POST` | `/api/embeddings/status` · `/api/embeddings/backfill` · `/api/embeddings/reload` · `/api/embeddings/models` | Coverage, background backfill, index reload, embedding model list |

@@ -6,7 +6,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
-from sqlmodel import Session, select, SQLModel
+from sqlmodel import Session, select, SQLModel, func
+from sqlalchemy.orm import defer
 from typing import List, Optional
 from datetime import datetime, timedelta
 from collections import Counter
@@ -28,7 +29,7 @@ from src.services.model_catalog import model_catalog
 from src.services.usage_service import usage_summary
 from src.services.notifier import get_notifier
 from src.services import embedding_service
-from src.services.paper_views import compact_paper
+from src.services.paper_views import compact_paper, card_paper, reading_badges, paper_verdict
 from src.services import author_index as author_index_service
 from src.services import bibtex_service
 from src.services import verdict_pipeline, reading_page, claude_budget, project_service
@@ -278,9 +279,14 @@ def search_papers(
     q: str = Query(..., description="Search by title"),
     limit: int = 50,
     compact: bool = Query(False, description="Small agent-friendly records"),
+    view: Optional[str] = Query(None, description="'card': the light records the home page renders"),
     session: Session = Depends(get_session)
 ):
     query = select(Paper).where(Paper.title.icontains(q)).order_by(Paper.score.desc(), Paper.published_at.desc()).limit(limit)
+    if view == "card":
+        results = session.exec(query.options(defer(Paper.full_text))).all()
+        badges = reading_badges(session, [p.id for p in results])
+        return [card_paper(p, badges.get(p.id)) for p in results]
     results = session.exec(query).all()
     return [compact_paper(p) for p in results] if compact else results
 
@@ -319,6 +325,7 @@ class SemanticSearchRequest(SQLModel):
     exclude_ids: Optional[List[str]] = None
     limit: int = 30
     compact: bool = True
+    view: Optional[str] = None                  # "card": the light records the home page renders
 
 
 def _allowed_ids_for_filters(session: Session, req: SemanticSearchRequest) -> Optional[set]:
@@ -362,11 +369,14 @@ async def _semantic_search_impl(req: SemanticSearchRequest, session: Session):
         raise HTTPException(status_code=502, detail=f"Embedding request failed: {e}")
     by_id = {p.id: p for p in session.exec(select(Paper).where(Paper.id.in_([h[0] for h in hits]))).all()} if hits else {}
     results = []
+    badges = reading_badges(session, list(by_id)) if req.view == "card" else {}
     for pid, sim in hits:
         p = by_id.get(pid)
         if not p:
             continue
-        if req.compact:
+        if req.view == "card":
+            results.append({**card_paper(p, badges.get(p.id)), "similarity": round(sim, 4)})
+        elif req.compact:
             results.append(compact_paper(p, similarity=sim))
         else:
             d = p.model_dump(); d.pop("full_text", None); d["similarity"] = round(sim, 4)
@@ -384,12 +394,13 @@ async def semantic_search_papers(
     min_score: Optional[int] = None,
     category: Optional[str] = None,
     compact: bool = Query(False, description="Small agent-friendly records (default full records for the UI)"),
+    view: Optional[str] = Query(None, description="'card': the light records the home page renders"),
     session: Session = Depends(get_session),
 ):
     """Semantic search over title+abstract embeddings (one embedding call per query). Returns papers with cosine `similarity`."""
     if not q.strip():
         return {"query": q, "results": [], "index_size": embedding_service.index.size()}
-    req = SemanticSearchRequest(query=q, limit=limit, days=days, min_score=min_score, category=category, compact=compact)
+    req = SemanticSearchRequest(query=q, limit=limit, days=days, min_score=min_score, category=category, compact=compact, view=view)
     return await _semantic_search_impl(req, session)
 
 
@@ -442,6 +453,42 @@ def get_next_date(date: str, session: Session = Depends(get_session)):
         return {"date": result.date().isoformat()}
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+
+@api.get("/papers/feed")
+def papers_feed(
+    before: Optional[str] = Query(None, description="YYYY-MM-DD: newest publication day to consider (inclusive); omit for the latest"),
+    min_score: int = Query(0, description="Only papers scoring at least this (0 = every paper, scored or not)"),
+    session: Session = Depends(get_session),
+):
+    """
+    One publication day of the home page in one call: the newest day on or before `before` that has a
+    paper scoring >= `min_score`, every such paper of that day as a light card record (best first), how many
+    papers that day has in all, and `next` — the next earlier day with a qualifying paper (null at the end).
+    Days without a qualifying paper are skipped on the server.
+    """
+    cond = [Paper.score >= min_score] if min_score > 0 else []
+    q = select(Paper.published_at).where(*cond)
+    if before:
+        try:
+            b = datetime.strptime(before, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+        q = q.where(Paper.published_at < b + timedelta(days=1))
+    latest = session.exec(q.order_by(Paper.published_at.desc()).limit(1)).first()
+    if not latest:
+        return {"date": None, "total": 0, "papers": [], "next": None}
+    lo = datetime.combine(latest.date(), datetime.min.time())
+    hi = lo + timedelta(days=1)
+    day = (Paper.published_at >= lo, Paper.published_at < hi)
+    papers = session.exec(select(Paper).where(*day, *cond).options(defer(Paper.full_text))
+                          .order_by(Paper.score.desc(), Paper.published_at.desc())).all()
+    total = session.exec(select(func.count()).select_from(Paper).where(*day)).one()
+    nxt = session.exec(select(Paper.published_at).where(Paper.published_at < lo, *cond)
+                       .order_by(Paper.published_at.desc()).limit(1)).first()
+    badges = reading_badges(session, [p.id for p in papers])
+    return {"date": lo.date().isoformat(), "total": total,
+            "papers": [card_paper(p, badges.get(p.id)) for p in papers],
+            "next": nxt.date().isoformat() if nxt else None}
 
 # declared before /papers/{paper_id}, which would otherwise match it
 @api.get("/pipeline/backlog")
@@ -1184,17 +1231,11 @@ app.include_router(api)
 def picks_page(date: Optional[str] = None, days: int = 7, session: Session = Depends(get_session)):
     """Must Read / Worth Reading papers for `days` publication days ending at `date` (default: latest)."""
     from fastapi.responses import HTMLResponse
-    from src.models import PaperReading
     verdicts = ("must_read", "worth_reading")
-    rows = session.exec(select(Paper).where(Paper.status.in_(["SUMMARIZED", "PUSHED"]))
+    rows = session.exec(select(Paper).where(Paper.status.in_(["SUMMARIZED", "PUSHED"])).options(defer(Paper.full_text))
                         .order_by(Paper.published_at.desc()).limit(3000)).all()
 
-    def verdict_of(p):
-        try:
-            r = json.loads(p.score_reason or "{}")
-        except json.JSONDecodeError:
-            return None
-        return ((r.get("deep") or r.get("stage2") or {}) if isinstance(r, dict) else {}).get("verdict")
+    verdict_of = paper_verdict
     picks = [p for p in rows if verdict_of(p) in verdicts]
     all_days = sorted({p.published_at.strftime("%Y-%m-%d") for p in picks}, reverse=True)
     end = date if date in all_days else (all_days[0] if all_days else None)
@@ -1203,12 +1244,7 @@ def picks_page(date: Optional[str] = None, days: int = 7, session: Session = Dep
     by_day = [(d, sorted([p for p in picks if p.published_at.strftime("%Y-%m-%d") == d],
                          key=lambda p: (verdict_of(p) != "must_read", -(p.score or 0)))) for d in window]
     ids = [p.id for _, ps in by_day for p in ps]
-    readings = {}
-    for r in session.exec(select(PaperReading).where(PaperReading.paper_id.in_(ids))).all() if ids else []:
-        notes = json.loads(r.notes) if r.notes else []
-        fl = [f for n in notes for f in n.get("flags", []) if f.get("verified")]
-        readings[r.paper_id] = {"status": r.status, "flags": {"q": sum(f["kind"] == "questionable" for f in fl),
-                                                              "b": sum(f["kind"] == "big_claim" for f in fl)}}
+    readings = reading_badges(session, ids)
     projects = {pid: project_service.projects_of(pid) for pid in ids}
     later = all_days[max(0, i - days)] if i > 0 else None
     earlier = all_days[i + days] if i + days < len(all_days) else None

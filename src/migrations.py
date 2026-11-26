@@ -40,6 +40,19 @@ import json
 from src.models import Paper
 
 # Valid migrations list
+def migration_006_index_published_at(session: Session):
+    """
+    Index paper.published_at: the home page asks for one publication day at a time.
+    (A fresh database gets the index from SQLModel.metadata.create_all.)
+    """
+    logger.info("Migration 006: Indexing paper.published_at...")
+    try:
+        session.exec(text("CREATE INDEX IF NOT EXISTS ix_paper_published_at ON paper (published_at)"))
+        session.commit()
+    except Exception as e:
+        logger.error(f"Migration 006 Failed: {e}")
+        raise e
+
 MIGRATIONS = [
     migration_001_add_user_score,
 ]
@@ -187,6 +200,7 @@ MIGRATIONS = [
     migration_003_create_author_table,
     migration_004_two_stage_scoring,
     migration_005_bib_published_authors,
+    migration_006_index_published_at,
 ]
 
 def check_and_migrate(dev_commit: bool = False):

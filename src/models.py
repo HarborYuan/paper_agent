@@ -8,7 +8,7 @@ class Paper(SQLModel, table=True):
     title: str
     authors: str  # JSON list
     summary_generic: str
-    published_at: datetime
+    published_at: datetime = Field(index=True)
     category_primary: str
     all_categories: str  # JSON list
     pdf_url: str

@@ -5,6 +5,7 @@ import { ArrowLeft, Calendar, Users, ExternalLink, Star, Building2, Tag, Quote, 
 import { format } from 'date-fns';
 import ReactMarkdown from 'react-markdown';
 import ScoreBreakdown from '../components/ScoreBreakdown';
+import AuthorList from '../components/AuthorList';
 import RelatedPapers from '../components/RelatedPapers';
 
 const API_URL = '/api'; // All backend endpoints live under /api (same origin)
@@ -153,18 +154,6 @@ const PaperDetail = () => {
         tags = [paper.category_primary];
     }
 
-    let parsedAuthors = [];
-    if (Array.isArray(paper.authors)) {
-        parsedAuthors = paper.authors;
-    } else if (typeof paper.authors === 'string') {
-        try {
-            parsedAuthors = JSON.parse(paper.authors.replace(/'/g, '"'));
-        } catch (e) {
-            let cleaned = paper.authors.replace(/[\[\]']/g, "");
-            parsedAuthors = cleaned.split(',').map(s => s.trim().replace(/"/g, ""));
-        }
-    }
-
     // Format Date (UTC)
     // Ensure the date string is treated as UTC
     const dateStr = paper.published_at.endsWith('Z') ? paper.published_at : `${paper.published_at}Z`;
@@ -274,19 +263,10 @@ const PaperDetail = () => {
                         <h3 className="flex items-center gap-2 text-sm font-bold text-slate-500 uppercase tracking-wider mb-3">
                             <Users size={16} /> Authors
                         </h3>
-                        <div className="flex flex-wrap gap-x-2 gap-y-1 text-slate-300">
-                            {parsedAuthors.map((author, idx) => (
-                                <span key={idx} className="flex items-center">
-                                    <Link 
-                                        to={`/author/${encodeURIComponent(author)}`}
-                                        className="hover:text-cyan-400 hover:underline transition-colors cursor-pointer"
-                                    >
-                                        {author}
-                                    </Link>
-                                    {idx < parsedAuthors.length - 1 ? ',' : ''}
-                                </span>
-                            ))}
-                        </div>
+                        <p className="text-slate-300 leading-relaxed">
+                            <AuthorList authors={paper.authors}
+                                linkClassName="hover:text-cyan-400 hover:underline transition-colors cursor-pointer" />
+                        </p>
                     </div>
 
                     {/* AI Summary */}

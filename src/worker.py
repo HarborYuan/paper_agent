@@ -9,7 +9,7 @@ from src.config import settings
 from src.models import Paper
 from src.services.arxiv import ArxivFetcher, ArxivAPIError
 from src.services.notifier import get_notifier, alert_arxiv_failure
-from src.services.paper_views import summary_tldr
+from src.services.paper_views import summary_tldr, short_authors_text
 from src.services.settings_service import get_llm_config
 from src.services.usage_service import cost_since
 from src.services.embedding_service import embed_new_papers
@@ -100,10 +100,7 @@ def _digest_chunks(papers: List[Paper]) -> List[Tuple[str, List[str]]]:
                 digest += f"{i}. {p.title}\n"
                 authors = p.authors_list
                 if authors:
-                    author_str = ", ".join(authors[:3])
-                    if len(authors) > 3:
-                        author_str += f" +{len(authors) - 3} more"
-                    digest += f"   👥 {author_str}\n"
+                    digest += f"   👥 {short_authors_text(authors, head=3, max_full=4)}\n"
                 label = VERDICT_LABEL.get(_verdict(p))
                 digest += (f"   ⭐ {label} ({p.score}){aff}\n" if label else f"   ⭐ Score: {p.score}{aff}\n")
                 projs = project_service.projects_of(p.id)

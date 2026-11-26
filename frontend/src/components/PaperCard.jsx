@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import { FileText, Calendar, Users, Tag, ExternalLink, Star, Building2, BookOpen, Check, X, Edit2 } from 'lucide-react';
 import { format } from 'date-fns';
-import { Link } from 'react-router-dom';
+import AuthorList from './AuthorList';
 
 import axios from 'axios';
 
@@ -103,31 +103,6 @@ const PaperCard = ({ paper, onRefreshed, similarity }) => {
         tags = JSON.parse(all_categories.replace(/'/g, '"'));
     } catch (e) {
         tags = [category_primary];
-    }
-
-    // Parse Authors
-    let parsedAuthors = [];
-    if (Array.isArray(authors)) {
-        parsedAuthors = authors;
-    } else if (typeof authors === 'string') {
-        try {
-            parsedAuthors = JSON.parse(authors.replace(/'/g, '"'));
-        } catch (e) {
-            // Fallback or just use the string
-            // Remove brackets if it looks like a python list string representation
-            let cleaned = authors.replace(/[\[\]']/g, "");
-            parsedAuthors = cleaned.split(',').map(s => s.trim().replace(/"/g, ""));
-        }
-    }
-
-    // Author Shortening Logic
-    let displayAuthors = parsedAuthors;
-    if (parsedAuthors.length > 4) {
-        displayAuthors = [
-            ...parsedAuthors.slice(0, 3),
-            '...',
-            parsedAuthors[parsedAuthors.length - 1]
-        ];
     }
 
     // Format Date (UTC)
@@ -252,23 +227,10 @@ const PaperCard = ({ paper, onRefreshed, similarity }) => {
                 {/* Authors */}
                 <div className="flex items-start gap-1.5 text-sm text-slate-300 mb-2">
                     <Users size={14} className="mt-0.5 shrink-0 text-slate-500" />
-                    <p className="line-clamp-2 text-xs leading-relaxed">
-                        {displayAuthors.map((author, idx) => (
-                            <span key={idx} className={author === '...' ? 'text-slate-500 mx-1' : ''}>
-                                {author !== '...' ? (
-                                    <Link
-                                        to={`/author/${encodeURIComponent(author)}`}
-                                        className="hover:text-cyan-400 hover:underline transition-colors"
-                                        onClick={(e) => e.stopPropagation()}
-                                    >
-                                        {author}
-                                    </Link>
-                                ) : (
-                                    author
-                                )}
-                                {idx < displayAuthors.length - 1 && author !== '...' ? ', ' : ''}
-                            </span>
-                        ))}
+                    <p className="text-xs leading-relaxed">
+                        <AuthorList authors={authors} short head={3} maxFull={4}
+                            linkClassName="hover:text-cyan-400 hover:underline transition-colors"
+                            moreClassName="text-slate-500 hover:text-cyan-400 cursor-pointer" />
                     </p>
                 </div>
 
