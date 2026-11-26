@@ -5,7 +5,7 @@
   </p>
   <p align="center">
     <a href="https://github.com/HarborYuan/paper_agent/actions/workflows/docker-publish.yml"><img src="https://github.com/HarborYuan/paper_agent/actions/workflows/docker-publish.yml/badge.svg" alt="Docker Build"></a>
-    <img src="https://img.shields.io/badge/version-2.1.2-cyan" alt="Version">
+    <img src="https://img.shields.io/badge/version-2.1.3-cyan" alt="Version">
     <img src="https://img.shields.io/badge/python-3.13+-blue?logo=python&logoColor=white" alt="Python">
     <img src="https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white" alt="FastAPI">
     <img src="https://img.shields.io/badge/React-61DAFB?logo=react&logoColor=black" alt="React">
@@ -46,6 +46,7 @@ Names are reserved for feature milestones; patch releases intentionally have no 
 
 | Version | Name | Highlights |
 |---------|------|------------|
+| **2.1.3** | *UI Update* | Paper page rebuilt in the new look (shared top bar, serif title, verdict pill, score editable on the page, company logo, every author linked, TL;DR, per-stage scoring, related papers), light and dark; score editor shared by home, author and paper pages; Meta logo shrunk from 365 KB to 4 KB (vector gradient instead of an embedded PNG) |
 | **2.1.2** | *UI Update* | Author page rebuilt with the home-page cards and a shared top bar, loading light card records (`GET /api/authors/{name}/papers?view=card`); company logos back on the new cards (home, search, author page), readable in light and dark |
 | **2.1.1** | *UI Update* | Reading page: papers whose arXiv HTML is broken (the reference list placed mid-section, later sections carrying their text in stray reference items) are read to the end instead of stopping at the misplaced reference list |
 | **2.1.0** | *UI Update* | Home page rebuilt in the look of the reading and Picks pages (serif headings, paper cards with verdict pills, light / dark), and made fast: one call per publication day (`GET /api/papers/feed`) with light card records — no full text, only the papers above the score filter, days without any skipped on the server — instead of every paper of the day with its full text (a busy day was ~12 MB); index on `paper.published_at` (migration 006). Every author on the reading page; wherever a list is still shortened (home cards, Picks, the Lark digest) the last author stays visible (`A, B, C, D, … +N, Z`). Author names link to the author page on the home cards, the paper page, the reading page and Picks (Picks cards restructured so links never nest). Fixed: names with an apostrophe broke the author list on the paper page |

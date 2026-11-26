@@ -141,7 +141,7 @@ main.pa-main { max-width: 1240px; margin: 0 auto; padding: 28px 24px 120px; }
 .pa-modal .actions { display: flex; justify-content: flex-end; gap: 8px; }
 
 /* author page (pages/AuthorDetail.jsx) */
-.pa .pa-back { display: inline-flex; align-items: center; gap: 2px; color: var(--muted); }
+.pa .pa-back { display: inline-flex; align-items: center; gap: 2px; color: var(--muted); background: none; border: 0; padding: 0; cursor: pointer; font-size: 13px; }
 .pa .pa-back:hover { color: var(--accent); text-decoration: none; }
 .pa-author-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .pa-author-head h1 { margin-right: 6px; overflow-wrap: anywhere; }
@@ -167,6 +167,69 @@ main.pa-main { max-width: 1240px; margin: 0 auto; padding: 28px 24px 120px; }
 .pa-form input:focus, .pa-form textarea:focus { border-color: var(--accent); }
 .pa-form .actions { display: flex; justify-content: flex-end; gap: 8px; }
 
+/* paper page (pages/PaperDetail.jsx, components/ScoreBreakdown.jsx, components/RelatedPapers.jsx) */
+main.pa-doc { max-width: 920px; }
+main.pa-doc > .pa-back { margin: 0 0 12px; }
+.pa a.pa-btn { color: var(--fg); }
+.pa a.pa-btn:hover { color: var(--accent); text-decoration: none; }
+.pa-paper h1 { margin: 10px 0 8px; overflow-wrap: anywhere; }
+.pa-paper .pa-authors { font-size: 14.5px; }
+.pa-paper .pa-logo { margin-left: auto; height: 26px; max-width: 140px; }
+.pa-paper .pa-aff { margin-top: 2px; }
+.pa-paper .pa-foot { margin-top: 12px; }
+.pa-actions { margin: 16px 0 0; }
+.pa-section { background: var(--paper); border: 1px solid var(--line); border-radius: 14px; padding: 20px 26px; margin-bottom: 16px; }
+.pa-section h2 { display: flex; align-items: center; gap: 8px; font: 600 20px/1.3 Georgia, "Times New Roman", serif; margin: 0 0 12px; }
+.pa-md { font-size: 15.5px; line-height: 1.75; overflow-wrap: anywhere; }
+.pa-md > :first-child { margin-top: 0; }
+.pa-md > :last-child { margin-bottom: 0; }
+.pa-md p, .pa-md ul, .pa-md ol { margin: 0 0 10px; }
+.pa-md ul, .pa-md ol { padding-left: 22px; }
+.pa-md ul { list-style: disc; }
+.pa-md ol { list-style: decimal; }
+.pa-md h2, .pa-md h3 { font: 600 16px/1.4 Georgia, serif; margin: 14px 0 6px; }
+.pa-md code { background: var(--soft); padding: 1px 5px; border-radius: 5px; font-size: .9em; }
+.pa-md pre { background: var(--soft); padding: 12px 14px; border-radius: 10px; white-space: pre-wrap; }
+.pa-md pre code { background: none; padding: 0; }
+.pa-abstract { margin: 0; font-size: 15px; line-height: 1.75; overflow-wrap: anywhere; }
+.pa-note { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); margin: 6px 4px 16px; }
+
+.pa-stages { display: grid; gap: 10px; }
+.pa-stage { background: var(--soft); border: 1px solid transparent; border-radius: 12px; padding: 14px 16px; }
+.pa-stage.final { border-color: color-mix(in srgb, var(--accent) 35%, transparent); }
+.pa-stage .hd { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.pa-stage .t { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; letter-spacing: .04em; color: var(--muted); }
+.pa-stage .sc { margin-left: auto; text-align: right; line-height: 1.2; }
+.pa-stage .sc b { font: 600 22px/1.1 Georgia, serif; font-variant-numeric: tabular-nums; }
+.pa-stage .sc small { display: block; font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
+.pa-stage .sc .err { font-size: 12.5px; color: var(--bad); }
+.pa-stage .dims { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px 16px; margin: 10px 0 4px; }
+.pa-dim .lbl { display: flex; justify-content: space-between; font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.pa-dim .lbl b { color: var(--fg); font-variant-numeric: tabular-nums; }
+.pa-dim .bar { height: 5px; background: var(--line); border-radius: 999px; overflow: hidden; }
+.pa-dim .bar span { display: block; height: 100%; background: var(--accent); border-radius: 999px; }
+.pa-stage .why { margin: 8px 0 0; font-size: 14.5px; line-height: 1.65; }
+.pa-stage .flags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.pa-stage .flags .chip { display: inline-flex; align-items: center; gap: 4px; }
+.pa-stage .note { display: flex; align-items: flex-start; gap: 6px; font-size: 12.5px; color: var(--accent); margin: 8px 0 0; }
+.pa-stage .note svg { margin-top: 3px; flex-shrink: 0; }
+.pa-stage .note.warn { color: var(--warn); }
+.pa-scoretext { display: flex; align-items: center; gap: 8px; margin: 0; padding: 10px 14px; background: var(--soft); border-radius: 10px; font-size: 14px; color: var(--muted); }
+.pa-boost { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; color: var(--warn); }
+.pa-flow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+.pa-flow b { color: var(--fg); }
+
+.pa-related { list-style: none; margin: 0; padding: 0; }
+.pa-related li + li { border-top: 1px solid var(--line); }
+.pa .pa-related a { display: flex; align-items: center; gap: 12px; padding: 10px 8px; border-radius: 10px; color: var(--fg); }
+.pa .pa-related a:hover { background: var(--soft); text-decoration: none; }
+.pa-related .m { width: 40px; flex-shrink: 0; font-size: 13.5px; font-weight: 600; color: var(--b); font-variant-numeric: tabular-nums; }
+.pa-related .txt { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.pa-related .t { font-weight: 600; font-size: 14.5px; line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.pa-related a:hover .t { color: var(--accent); }
+.pa-related .pa-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pa-related .pa-score { cursor: inherit; flex-shrink: 0; }
+
 @media (max-width: 860px) {
   .pa-top .in { padding: 8px 16px; }
   main.pa-main { padding: 16px 16px 80px; }
@@ -175,4 +238,5 @@ main.pa-main { max-width: 1240px; margin: 0 auto; padding: 28px 24px 120px; }
   .pa-search input { padding-right: 16px; }
   .pa-seg { position: static; transform: none; margin-top: 8px; }
   .pa-card { padding: 16px 18px; }
+  .pa-section { padding: 16px 18px; }
 }
