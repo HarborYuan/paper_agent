@@ -80,6 +80,33 @@ def test_segment_units_and_crop_detection():
     assert all("reference" not in (u.get("text") or "") for u in units)  # stops at the bibliography
 
 
+BROKEN_HTML = """<html><body><article class="ltx_document">
+<section class="ltx_section"><h2 class="ltx_title ltx_title_section">3 Method</h2>
+<div class="ltx_para"><p class="ltx_p">Our method is described in</p></div>
+<section class="ltx_bibliography"><h2 class="ltx_title ltx_title_bibliography">References</h2><ul class="ltx_biblist">
+<li class="ltx_bibitem"><span class="ltx_tag ltx_tag_bibitem">[1]</span><span class="ltx_bibblock">, and we schedule GPUs better.</span></li>
+</ul></section></section>
+<section class="ltx_section"><h2 class="ltx_title ltx_title_section">4 Spatial Video</h2>
+<li class="ltx_bibitem"><span class="ltx_tag ltx_tag_bibitem">[5]</span><span class="ltx_bibblock">Spatial video shows each eye a different image.
+<li class="ltx_bibitem"><span class="ltx_tag ltx_tag_bibitem">[6]</span><span class="ltx_bibblock"></span></li></span></li>
+<div class="ltx_para"><p class="ltx_p">We convert the stream to stereo.</p></div>
+</section>
+<section class="ltx_appendix"><p class="ltx_p">Appendix text.</p></section>
+</article></body></html>"""
+
+
+def test_segment_reads_past_a_misplaced_reference_list():
+    units = reading_service.segment(BROKEN_HTML, "https://arxiv.org/html/2611.00002")
+    texts = [u["text"] for u in units if u["kind"] in ("heading", "para")]
+    assert texts == ["3 Method", "Our method is described in", ", and we schedule GPUs better.", "4 Spatial Video",
+                     "Spatial video shows each eye a different image.", "We convert the stream to stereo."]
+
+    # a well-formed paper whose unnumbered appendix follows the references still stops at them
+    ok = HTML.replace("</article>", '<section class="ltx_section"><h2 class="ltx_title ltx_title_section">A Extra</h2>'
+                                    '<p class="ltx_p">Appendix as a plain section.</p></section></article>')
+    assert all("Appendix" not in (u.get("text") or "") for u in reading_service.segment(ok, "https://arxiv.org/html/x"))
+
+
 # ---------------------------------------------------------------------------- runner
 class _Msg(SimpleNamespace):
     pass

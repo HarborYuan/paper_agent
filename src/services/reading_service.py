@@ -63,7 +63,8 @@ def _text(node) -> str:
             alt = n.get("alttext") or ""
             out.append(f"${alt}$" if alt else "")
             return
-        if "ltx_note" in cls or n.name in ("script", "style", "figure") or "ltx_tag_equation" in cls:
+        if "ltx_note" in cls or n.name in ("script", "style", "figure") or "ltx_tag_equation" in cls \
+                or "ltx_tag_bibitem" in cls:
             return
         for c in n.children:
             walk(c)
@@ -103,13 +104,29 @@ def segment(html: str, base_url: str) -> List[dict]:
             if t:
                 add("para", "P", text=t)
 
+    # LaTeXML sometimes breaks a paper: the reference list lands mid-section and the sections after it
+    # carry their text in stray bibliography items. Read past it and keep that text as paragraphs.
+    broken = any(not li.find_parent(class_="ltx_bibliography") for li in art.find_all("li", class_="ltx_bibitem"))
+
     seen = set()
     for el in art.find_all(True):
         if any(id(a) in seen for a in el.parents):
             continue
         cls = el.get("class") or []
-        if "ltx_bibliography" in cls or "ltx_appendix" in cls:
+        if "ltx_appendix" in cls or ("ltx_bibliography" in cls and not broken):
             break
+        if broken and "ltx_title_bibliography" in cls:
+            seen.add(id(el))
+            continue
+        if broken and el.name == "li" and "ltx_bibitem" in cls:
+            for blk in el.find_all("span", class_="ltx_bibblock", recursive=False):
+                blk = BeautifulSoup(str(blk), "html.parser")
+                for nested in blk.find_all("li"):
+                    nested.decompose()       # visited on its own
+                t = _text(blk)
+                if t and len(t) > 1:
+                    add("para", "P", text=t)
+            continue
         if abstract is not None and (el is abstract or abstract in el.parents):
             continue
         if el.name in ("h2", "h3", "h4", "h5") and "ltx_title" in cls \
